@@ -75,6 +75,7 @@ public final class MainActivity extends Activity {
     private boolean initialized;
     private boolean resumed;
     private boolean eraserGestureChanged;
+    private boolean deleting;
     private Tool tool = Tool.PEN;
     private float strokeWidth = 5f;
     private long changeGeneration;
@@ -286,10 +287,7 @@ public final class MainActivity extends Activity {
 
         @Override
         public void onEndRawDrawing(boolean stylus, TouchPoint point) {
-            mainHandler.post(() -> {
-                drawDocumentToSurface();
-                scheduleSave();
-            });
+            // The completed raw stroke is already on the e-ink framebuffer.
         }
 
         @Override
@@ -311,6 +309,7 @@ public final class MainActivity extends Activity {
                 pushHistory();
                 document.strokes.add(new InkDocumentModel.Stroke(UUID.randomUUID().toString(), strokeWidth, points));
             }
+            mainHandler.post(MainActivity.this::scheduleSave);
         }
 
         @Override public void onBeginRawErasing(boolean stylus, TouchPoint point) {}
@@ -434,6 +433,7 @@ public final class MainActivity extends Activity {
 
     private void deleteHandwriting() {
         mainHandler.removeCallbacks(delayedSave);
+        deleting = true;
         setStatus("Deleting…");
         fileExecutor.execute(() -> {
             try {
@@ -600,7 +600,7 @@ public final class MainActivity extends Activity {
     protected void onPause() {
         resumed = false;
         mainHandler.removeCallbacks(delayedSave);
-        if (document != null && session != null) persistCurrentDocument();
+        if (!deleting && document != null && session != null) persistCurrentDocument();
         if (touchHelper != null) touchHelper.setRawDrawingEnabled(false);
         super.onPause();
     }

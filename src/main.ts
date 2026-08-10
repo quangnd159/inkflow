@@ -183,7 +183,13 @@ export default class InkFlowPlugin extends Plugin {
         source: loaded.paths.source,
         snapshot: loaded.paths.snapshot,
       });
-      window.open(`inkflow-boox://open?${params.toString()}`, "_blank");
+      const launcher = document.createElement("a");
+      launcher.href = `inkflow-boox://open?${params.toString()}`;
+      launcher.rel = "noreferrer";
+      launcher.hidden = true;
+      document.body.appendChild(launcher);
+      launcher.click();
+      launcher.remove();
     } catch (error) {
       console.error("InkFlow: unable to open BOOX companion", error);
       new Notice("Could not prepare this note for native handwriting.");

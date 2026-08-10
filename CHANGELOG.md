@@ -2,6 +2,14 @@
 
 All notable changes to Inkflow are documented here.
 
+## Next
+
+- Add a local Android deep-link bridge for opening the active note in the native Inkflow BOOX companion.
+- Prepare the existing editable ink source and portable PNG embed before leaving Obsidian.
+- Refresh visible PNG embeds after native vault writes and reload native edits when Obsidian becomes visible again.
+- Cleanly remove associations and embeds when disposable handwriting is deleted from the companion.
+- Keep the existing browser canvas as the automatic fallback outside Android e-ink mode.
+
 ## 1.3.0 — 2026-08-10
 
 - Paint new ink segments directly instead of clearing and compositing the full visible canvas on every pen frame.

@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     tags:
-      - "companion-poc-*"
+      - "companion-*"
     paths:
       - "android-companion/**"
       - ".github/workflows/android-companion.yml"
@@ -26,22 +26,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Build BOOX proof of concept
+      - name: Build BOOX companion
         run: gradle -p android-companion assembleDebug --stacktrace
       - name: Name installable APK
-        run: cp android-companion/app/build/outputs/apk/debug/app-debug.apk android-companion/app/build/outputs/apk/debug/inkflow-boox-lab.apk
+        run: cp android-companion/app/build/outputs/apk/debug/app-debug.apk android-companion/app/build/outputs/apk/debug/inkflow-boox.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: inkflow-boox-lab
-          path: android-companion/app/build/outputs/apk/debug/inkflow-boox-lab.apk
+          name: inkflow-boox
+          path: android-companion/app/build/outputs/apk/debug/inkflow-boox.apk
           if-no-files-found: error
-      - name: Publish tagged feasibility build
-        if: startsWith(github.ref, 'refs/tags/companion-poc-')
+      - name: Publish tagged companion build
+        if: startsWith(github.ref, 'refs/tags/companion-')
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
-          "android-companion/app/build/outputs/apk/debug/inkflow-boox-lab.apk"
+          "android-companion/app/build/outputs/apk/debug/inkflow-boox.apk"
           --prerelease
-          --title "Inkflow BOOX Lab ${GITHUB_REF_NAME#companion-poc-}"
-          --notes "Native BOOX raw-ink feasibility build for the Go 10.3. This revision follows Onyx's supported application bootstrap and surface lifecycle. It is not the production Inkflow companion and does not retain notes yet. Install it only to compare stylus latency with FreeMark. The status must read 'Raw ink ready' before testing."
+          --title "Inkflow BOOX ${GITHUB_REF_NAME#companion-}"
+          --notes "End-to-end Inkflow companion test for BOOX. Open it from the Inkflow ribbon inside Obsidian, choose the vault root once, and write through Onyx's native raw-pen path. This prerelease persists editable ink and PNG snapshots directly to the selected vault without network or broad storage permissions."

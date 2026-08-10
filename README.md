@@ -39,9 +39,11 @@ The eraser removes whole strokes. This is deliberate: it is predictable, fast, a
 
 ## E-ink and Boox
 
-Enable **Settings → Inkflow → E-ink mode** on a Boox or other e-ink tablet. It renders the display canvas at native CSS resolution, avoids full-canvas work while the pen is moving, redraws once after an erasure, and waits for a writing pause before encoding the PNG snapshot. Browsers that report the standards-based `(update: slow)` media feature receive this profile automatically.
+Enable **Settings → Inkflow → E-ink mode** on a Boox or other e-ink tablet. On Android, the ordinary Inkflow ribbon action then opens the optional Inkflow BOOX companion, which uses Onyx's native raw-pen renderer while writing the same `.ink.json` and PNG assets directly into the vault. The first launch asks you to select the vault root through Android's standard folder picker; the companion receives access only to that selected folder.
 
-On Boox, open **Control Center → EInkWise** for Obsidian and use **Speed mode**. If ghosting accumulates, trigger a manual full refresh. Boox's separate handwriting optimization is available only for selected supported Android apps, so it may not be offered for Obsidian; Inkflow instead minimizes the browser work and screen changes under its control.
+The command **Open browser handwriting canvas** always keeps the portable WebView renderer available. It renders at native CSS resolution, avoids full-canvas work while the pen is moving, redraws once after an erasure, and waits for a writing pause before encoding the PNG snapshot. Browsers that report the standards-based `(update: slow)` media feature receive this profile automatically.
+
+The native companion requests no network, account, overlay, accessibility, or broad storage permission. If it is not installed, disable e-ink mode or run **Open browser handwriting canvas**.
 
 ## Files and privacy
 
