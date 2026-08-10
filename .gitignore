@@ -1,4 +1,6 @@
 node_modules/
+android-companion/.gradle/
+android-companion/**/build/
 coverage/
 *.log
 .DS_Store
