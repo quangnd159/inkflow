@@ -1,0 +1,43 @@
+name: Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["poc-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.9"
+      - name: Build proof of concept
+        run: gradle assembleDebug --stacktrace
+      - name: Name installable APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/eink-studio-lab.apk
+      - uses: actions/upload-artifact@v5
+        with:
+          name: eink-studio-lab
+          path: app/build/outputs/apk/debug/eink-studio-lab.apk
+          if-no-files-found: error
+      - name: Publish tagged build
+        if: startsWith(github.ref, 'refs/tags/poc-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          "app/build/outputs/apk/debug/eink-studio-lab.apk"
+          --prerelease
+          --title "Eink Studio Lab ${GITHUB_REF_NAME#poc-}"
+          --notes "Standalone BOOX-native e-ink drawing proof of concept. Autosaves one local canvas. No network or storage permissions."
