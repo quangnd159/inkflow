@@ -2,7 +2,7 @@
 
 This is a deliberately narrow Android proof of concept for Inkflow's native BOOX renderer. It answers one question before the production companion is designed: can a normal third-party APK initialize Onyx raw drawing on the BOOX Go 10.3 and match FreeMark's perceived latency?
 
-The app contains a full-screen dotted `SurfaceView` and initializes Onyx `TouchHelper` through the official Pen SDK. It does not request storage, network, overlay, accessibility, or account permissions. It does not yet retain strokes. The visible status must say **Raw ink ready** before the latency test is meaningful.
+The app contains a full-screen dotted `SurfaceView` and initializes Onyx `TouchHelper` through the official Pen SDK. Its application bootstrap, hidden-API compatibility layer, supported ABIs, and surface lifecycle mirror Onyx's current pen demo. It does not request storage, network, overlay, accessibility, or account permissions. It does not yet retain strokes. The visible status must say **Raw ink ready** before the latency test is meaningful.
 
 ## Test protocol
 
