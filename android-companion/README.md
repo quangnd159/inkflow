@@ -1,18 +1,19 @@
 # Inkflow BOOX Lab
 
-This is a deliberately narrow Android proof of concept for Inkflow's native BOOX renderer. It answers one question before the production companion is designed: can a normal third-party APK initialize Onyx raw drawing on the BOOX Go 10.3 and match FreeMark's perceived latency?
+Inkflow BOOX is the native capture companion for the Inkflow Obsidian plugin. It keeps Onyx's zero-latency raw-pen renderer on the hot path while saving the same editable `.ink.json` and portable PNG files used by the plugin.
 
-The app contains a full-screen dotted `SurfaceView` and initializes Onyx `TouchHelper` through the official Pen SDK. Its application bootstrap, hidden-API compatibility layer, supported ABIs, and surface lifecycle mirror Onyx's current pen demo. It does not request storage, network, overlay, accessibility, or account permissions. It does not yet retain strokes. The visible status must say **Raw ink ready** before the latency test is meaningful.
+The app contains a full-screen dotted `SurfaceView` and initializes Onyx `TouchHelper` through the official Pen SDK. Its application bootstrap, hidden-API compatibility layer, supported ABIs, and surface lifecycle mirror Onyx's current pen demo. It requests no storage, network, overlay, accessibility, or account permissions. Android's folder picker grants durable access to the selected vault only.
 
-## Test protocol
+## Use
 
-1. Install the debug APK on the BOOX Go 10.3.
-2. Open **Inkflow BOOX Lab**.
-3. Confirm the status says **Raw ink ready**. If it reports an error, capture the exact message.
-4. Write several fast loops and short words. Compare the pen-to-line distance with FreeMark.
-5. Lift the pen, leave the app, and reopen it once to exercise the SDK lifecycle.
+1. Install the companion APK on the BOOX Go 10.3.
+2. In Obsidian, enable Inkflow's **E-ink mode** and open a Markdown note.
+3. Tap Inkflow's ribbon pen. On first use, choose the root of the same Obsidian vault.
+4. Write with the pen, erase whole strokes, change among three widths, or undo/redo.
+5. Return to Obsidian. The editable ink source and embedded PNG update in the vault.
+6. Use the × action to delete disposable handwriting; Obsidian removes the embed and association when it observes the deleted source.
 
-This APK is not the published Obsidian plugin and is not intended for normal note-taking yet.
+The deep link contains vault-relative paths only. The app cannot access any folder the user did not select, and it has no internet permission.
 
 ## Build
 

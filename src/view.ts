@@ -84,6 +84,20 @@ export class InkFlowView extends ItemView {
     this.inkCanvas?.refreshPerformance();
   }
 
+  async reloadFromDisk(): Promise<void> {
+    if (this.currentNote === null || this.paths === null || this.dirty || this.loading) return;
+    try {
+      const loaded = await this.plugin.storage.loadForNote(this.currentNote, this.paths.source);
+      this.inkDocument = loaded.document;
+      this.inkCanvas?.setDocument(loaded.document);
+      this.hasSavedAsset = !loaded.isNew;
+      this.setStatus("Saved");
+      this.updateControls();
+    } catch (error) {
+      console.error("InkFlow: unable to reload native handwriting", error);
+    }
+  }
+
   requestDelete(): void {
     if (this.currentNote === null || this.paths === null || !this.hasHandwriting()) return;
     const noteName = this.currentNote.basename;
@@ -108,6 +122,18 @@ export class InkFlowView extends ItemView {
     this.noteTitleEl?.setText("Inkflow");
     this.setStatus("Open a note");
     this.updateControls();
+  }
+
+  async handleDeletedAsset(sourcePath: string): Promise<void> {
+    if (this.paths?.source !== sourcePath || this.currentNote === null) return;
+    const note = this.currentNote;
+    this.clearSaveTimer();
+    this.currentNote = null;
+    this.paths = null;
+    this.dirty = false;
+    this.hasSavedAsset = false;
+    await this.saveChain;
+    await this.openNote(note);
   }
 
   private buildInterface(): void {
@@ -216,7 +242,7 @@ export class InkFlowView extends ItemView {
         const image = await this.plugin.storage.save(note, paths, document, snapshot);
         await this.plugin.associate(note.path, paths.source);
         this.hasSavedAsset = true;
-        this.refreshVisibleEmbeds(image);
+        this.plugin.refreshVisibleEmbeds(image);
         if (!this.dirty && this.currentNote === note) this.setStatus("Saved");
       } catch (error) {
         if (this.currentNote !== note) return;
@@ -268,18 +294,6 @@ export class InkFlowView extends ItemView {
     }
   }
 
-  private refreshVisibleEmbeds(image: TFile): void {
-    const resource = this.app.vault.getResourcePath(image);
-    const resourceBase = stripResourceVersion(resource);
-    const documents = new Set<Document>([this.contentEl.ownerDocument]);
-    this.app.workspace.iterateAllLeaves((leaf) => documents.add(leaf.view.containerEl.ownerDocument));
-    for (const ownerDocument of documents) {
-      for (const element of ownerDocument.querySelectorAll<HTMLImageElement>("img")) {
-        if (stripResourceVersion(element.src) === resourceBase) element.src = resource;
-      }
-    }
-  }
-
   private hasHandwriting(): boolean {
     return this.hasSavedAsset || (this.inkDocument?.strokes.length ?? 0) > 0;
   }
@@ -315,8 +329,4 @@ export class InkFlowView extends ItemView {
       this.saveTimer = null;
     }
   }
-}
-
-function stripResourceVersion(resource: string): string {
-  return resource.split(/[?#]/, 1)[0] ?? resource;
 }

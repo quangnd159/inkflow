@@ -4,7 +4,7 @@
     <application
         android:name=".InkflowApplication"
         android:allowBackup="false"
-        android:label="Inkflow BOOX Lab"
+        android:label="Inkflow BOOX"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         tools:replace="android:allowBackup,android:label">
@@ -12,10 +12,17 @@
             android:name=".MainActivity"
             android:configChanges="keyboardHidden|orientation|screenSize"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="sensorPortrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="inkflow-boox" android:host="open" />
             </intent-filter>
         </activity>
     </application>

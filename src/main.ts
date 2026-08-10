@@ -12,11 +12,30 @@ export default class InkFlowPlugin extends Plugin {
     this.storage = new InkStorage(this.app.vault, () => this.settings.attachmentFolder);
     this.registerView(INKFLOW_VIEW_TYPE, (leaf) => new InkFlowView(leaf, this));
     this.addRibbonIcon("pencil", "Open handwriting", () => {
-      void this.activateView();
+      void this.openHandwriting();
     });
     this.addCommand({
       id: "open-handwriting",
       name: "Open handwriting for current note",
+      checkCallback: (checking) => {
+        const available = this.app.workspace.getActiveViewOfType(MarkdownView) !== null;
+        if (available && !checking) void this.openHandwriting();
+        return available;
+      },
+    });
+    this.addCommand({
+      id: "open-boox-handwriting",
+      name: "Open in native handwriting companion",
+      checkCallback: (checking) => {
+        const note = this.app.workspace.getActiveFile();
+        const available = Platform.isAndroidApp && note instanceof TFile && note.extension === "md";
+        if (available && !checking) void this.openNativeHandwriting(note);
+        return available;
+      },
+    });
+    this.addCommand({
+      id: "open-browser-handwriting",
+      name: "Open browser handwriting canvas",
       checkCallback: (checking) => {
         const available = this.app.workspace.getActiveViewOfType(MarkdownView) !== null;
         if (available && !checking) void this.activateView();
@@ -59,7 +78,9 @@ export default class InkFlowPlugin extends Plugin {
       void this.saveSettings();
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
-      if (file instanceof TFile && file.extension === "md") void this.handleDeletedNote(file.path);
+      if (!(file instanceof TFile)) return;
+      if (file.extension === "md") void this.handleDeletedNote(file.path);
+      else if (file.path.endsWith(".ink.json")) void this.handleDeletedNativeSource(file.path);
     }));
     this.registerEvent(this.app.workspace.on("css-change", () => {
       for (const leaf of this.app.workspace.getLeavesOfType(INKFLOW_VIEW_TYPE)) {
@@ -67,6 +88,18 @@ export default class InkFlowPlugin extends Plugin {
         if (view instanceof InkFlowView) view.handleThemeChange();
       }
     }));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (!(file instanceof TFile) || file.extension !== "png") return;
+      if (!file.path.startsWith(`${this.settings.attachmentFolder.replace(/\/+$/, "")}/`)) return;
+      this.refreshVisibleEmbeds(file);
+    }));
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      for (const leaf of this.app.workspace.getLeavesOfType(INKFLOW_VIEW_TYPE)) {
+        const view = leaf.view;
+        if (view instanceof InkFlowView) void view.reloadFromDisk();
+      }
+    });
     this.addSettingTab(new InkFlowSettingTab(this.app, this));
   }
 
@@ -119,6 +152,44 @@ export default class InkFlowPlugin extends Plugin {
     }
   }
 
+  refreshVisibleEmbeds(image: TFile): void {
+    const resource = this.app.vault.getResourcePath(image);
+    const resourceBase = stripResourceVersion(resource);
+    const documents = new Set<Document>([document]);
+    this.app.workspace.iterateAllLeaves((leaf) => documents.add(leaf.view.containerEl.ownerDocument));
+    for (const ownerDocument of documents) {
+      for (const element of ownerDocument.querySelectorAll<HTMLImageElement>("img")) {
+        if (stripResourceVersion(element.src) === resourceBase) element.src = resource;
+      }
+    }
+  }
+
+  private async openHandwriting(): Promise<void> {
+    const note = this.app.workspace.getActiveFile();
+    if (Platform.isAndroidApp && this.settings.eInkMode && note instanceof TFile && note.extension === "md") {
+      await this.openNativeHandwriting(note);
+      return;
+    }
+    await this.activateView();
+  }
+
+  private async openNativeHandwriting(note: TFile): Promise<void> {
+    try {
+      const loaded = await this.storage.prepareForNative(note, this.getAssociation(note.path));
+      await this.associate(note.path, loaded.paths.source);
+      const params = new URLSearchParams({
+        note: note.path,
+        title: note.basename,
+        source: loaded.paths.source,
+        snapshot: loaded.paths.snapshot,
+      });
+      window.open(`inkflow-boox://open?${params.toString()}`, "_blank");
+    } catch (error) {
+      console.error("InkFlow: unable to open BOOX companion", error);
+      new Notice("Could not prepare this note for native handwriting.");
+    }
+  }
+
   private async activateView(): Promise<void> {
     let leaf = this.app.workspace.getLeavesOfType(INKFLOW_VIEW_TYPE)[0];
     if (leaf === undefined) {
@@ -165,12 +236,39 @@ export default class InkFlowPlugin extends Plugin {
     await this.cleanupDeletedNote(notePath);
   }
 
+  private async handleDeletedNativeSource(sourcePath: string): Promise<void> {
+    try {
+      const paths = this.storage.getPathsFromSource(sourcePath);
+      const notePaths = Object.entries(this.settings.associations)
+        .filter(([, source]) => source === sourcePath)
+        .map(([notePath]) => notePath);
+      if (notePaths.length === 0) return;
+      for (const notePath of notePaths) delete this.settings.associations[notePath];
+      await this.saveSettings();
+      for (const notePath of notePaths) {
+        const note = this.app.vault.getAbstractFileByPath(notePath);
+        if (note instanceof TFile) await this.storage.removeEmbed(note, paths);
+      }
+      for (const leaf of this.app.workspace.getLeavesOfType(INKFLOW_VIEW_TYPE)) {
+        const view = leaf.view;
+        if (view instanceof InkFlowView) await view.handleDeletedAsset(sourcePath);
+      }
+      new Notice("Handwriting moved to trash.");
+    } catch (error) {
+      console.error("InkFlow: unable to clean up native handwriting deletion", error);
+    }
+  }
+
   private isAssetReferenced(paths: InkAssetPaths, excludedNotePath: string): boolean {
     if (Object.entries(this.settings.associations).some(([notePath, source]) => notePath !== excludedNotePath && source === paths.source)) return true;
     return Object.entries(this.app.metadataCache.resolvedLinks).some(
       ([notePath, links]) => notePath !== excludedNotePath && (links[paths.snapshot] ?? 0) > 0,
     );
   }
+}
+
+function stripResourceVersion(resource: string): string {
+  return resource.split(/[?#]/, 1)[0] ?? resource;
 }
 
 function closestWidth(width: number): number {

@@ -10,8 +10,8 @@ android {
         applicationId = "dev.inkflow.boox"
         minSdk = 26
         targetSdk = 30
-        versionCode = 2
-        versionName = "0.1.1-poc"
+        versionCode = 3
+        versionName = "0.2.0"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -38,5 +38,6 @@ android {
 
 dependencies {
     implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.4")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
 }
