@@ -1,0 +1,364 @@
+import { clamp, shouldAddPoint, strokeHitsPoint } from "./geometry";
+import { renderDocument, renderStroke, pointFromPointer } from "./render";
+import type { InkDocument, InkPoint, InkStroke, Tool } from "./model";
+
+const MAX_DEVICE_PIXEL_RATIO = 2;
+const MAX_DISPLAY_PIXELS = 6_000_000;
+const MAX_HISTORY = 60;
+const ERASER_RADIUS = 24;
+const EXPORT_SCALE = 1;
+
+export interface InkCanvasOptions {
+  getPalmRejection: () => boolean;
+  onChange: () => void;
+  onToolChange: (tool: Tool) => void;
+}
+
+export class InkCanvas {
+  readonly canvas: HTMLCanvasElement;
+  private readonly cacheCanvas: HTMLCanvasElement;
+  private readonly context: CanvasRenderingContext2D;
+  private readonly cacheContext: CanvasRenderingContext2D;
+  private readonly resizeObserver: ResizeObserver;
+  private document: InkDocument | null = null;
+  private tool: Tool = "pen";
+  private width = 5;
+  private currentStroke: InkStroke | null = null;
+  private activePointer: number | null = null;
+  private penIsDown = false;
+  private eraserChanged = false;
+  private zoom = 1;
+  private undoStack: InkStroke[][] = [];
+  private redoStack: InkStroke[][] = [];
+  private frameRequested = false;
+  private resizeFrame: number | null = null;
+  private cacheDirty = true;
+  private viewportWidth = 1;
+  private viewportHeight = 1;
+  private deviceScale = 1;
+
+  constructor(parent: HTMLElement, private readonly options: InkCanvasOptions) {
+    this.canvas = parent.createEl("canvas", { cls: "inkflow-canvas", attr: { tabindex: "0", "aria-label": "Handwriting canvas" } });
+    this.cacheCanvas = createDetachedCanvas(parent);
+    const context = this.canvas.getContext("2d", { desynchronized: true });
+    const cacheContext = this.cacheCanvas.getContext("2d");
+    if (context === null || cacheContext === null) throw new Error("Canvas 2D is unavailable");
+    this.context = context;
+    this.cacheContext = cacheContext;
+    this.resizeObserver = new ResizeObserver(() => this.scheduleResize());
+    this.resizeObserver.observe(parent);
+    this.bindEvents();
+  }
+
+  setDocument(document: InkDocument): void {
+    document.pageStyle = "dots";
+    this.document = document;
+    this.currentStroke = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.zoom = 1;
+    this.invalidateCache();
+  }
+
+  setTool(tool: Tool): void {
+    this.tool = tool;
+    this.canvas.dataset.tool = tool;
+    this.options.onToolChange(tool);
+  }
+
+  setWidth(width: number): void {
+    this.width = width;
+  }
+
+  refreshTheme(): void {
+    this.invalidateCache();
+  }
+
+  setZoom(zoom: number): void {
+    this.zoom = clamp(zoom, 0.65, 3);
+    this.invalidateCache();
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  canRedo(): boolean {
+    return this.redoStack.length > 0;
+  }
+
+  undo(): void {
+    if (this.document === null) return;
+    const previous = this.undoStack.pop();
+    if (previous === undefined) return;
+    this.redoStack.push(this.document.strokes);
+    this.document.strokes = previous;
+    this.changed();
+  }
+
+  redo(): void {
+    if (this.document === null) return;
+    const next = this.redoStack.pop();
+    if (next === undefined) return;
+    this.undoStack.push(this.document.strokes);
+    this.document.strokes = next;
+    this.changed();
+  }
+
+  exportPng(): Promise<ArrayBuffer> {
+    if (this.document === null) return Promise.reject(new Error("No ink document is open"));
+    const canvas = createDetachedCanvas(this.canvas);
+    canvas.width = Math.round(this.document.width * EXPORT_SCALE);
+    canvas.height = Math.round(this.document.height * EXPORT_SCALE);
+    const context = canvas.getContext("2d", { alpha: false });
+    if (context === null) return Promise.reject(new Error("Canvas export is unavailable"));
+    const palette = this.getPalette();
+    renderDocument(context, this.document, {
+      scale: EXPORT_SCALE,
+      offsetX: 0,
+      offsetY: 0,
+      ...palette,
+    });
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob === null) reject(new Error("Unable to encode PNG snapshot"));
+        else void blob.arrayBuffer().then(resolve, reject);
+      }, "image/png");
+    });
+  }
+
+  destroy(): void {
+    this.resizeObserver.disconnect();
+    if (this.resizeFrame !== null) window.cancelAnimationFrame(this.resizeFrame);
+  }
+
+  private bindEvents(): void {
+    this.canvas.addEventListener("pointerdown", this.onPointerDown);
+    this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("pointerup", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    this.canvas.addEventListener("keydown", this.onKeyDown);
+    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+  }
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    if (this.document === null || this.activePointer !== null) return;
+    if (this.options.getPalmRejection() && event.pointerType === "touch" && this.penIsDown) return;
+    if (event.pointerType === "pen") this.penIsDown = true;
+    const point = this.toPoint(event);
+    if (!this.isOnPage(point)) return;
+    this.activePointer = event.pointerId;
+    this.canvas.setPointerCapture(event.pointerId);
+    this.canvas.focus({ preventScroll: true });
+    this.pushHistory();
+    if (this.tool === "pen") {
+      this.currentStroke = { id: createStrokeId(), color: "auto", width: this.width, points: [point] };
+      this.requestFrame();
+    } else {
+      this.eraserChanged = false;
+      this.erase(point);
+    }
+    event.preventDefault();
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerId !== this.activePointer || this.document === null) return;
+    const coalesced = event.getCoalescedEvents?.();
+    const samples = coalesced !== undefined && coalesced.length > 0 ? coalesced : [event];
+    for (const sample of samples) {
+      const point = this.toPoint(sample);
+      if (!this.isOnPage(point)) continue;
+      if (this.tool === "pen" && this.currentStroke !== null) {
+        if (shouldAddPoint(this.currentStroke.points, point)) this.currentStroke.points.push(point);
+      } else if (this.tool === "eraser") {
+        this.erase(point);
+      }
+    }
+    this.requestFrame();
+    event.preventDefault();
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (event.pointerId !== this.activePointer || this.document === null) return;
+    if (event.pointerType === "pen") this.penIsDown = false;
+    if (this.currentStroke !== null) {
+      const committed = this.currentStroke;
+      this.document.strokes = [...this.document.strokes, committed];
+      this.currentStroke = null;
+      this.commitStrokeToCache(committed);
+      this.options.onChange();
+    } else if (this.tool === "eraser") {
+      if (this.eraserChanged) this.changed();
+      else this.undoStack.pop();
+    }
+    this.activePointer = null;
+    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    const modifier = event.metaKey || event.ctrlKey;
+    if (modifier && event.key.toLowerCase() === "z") {
+      if (event.shiftKey) this.redo();
+      else this.undo();
+      event.preventDefault();
+    } else if (event.key.toLowerCase() === "p") {
+      this.setTool("pen");
+    } else if (event.key.toLowerCase() === "e") {
+      this.setTool("eraser");
+    }
+  };
+
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    this.setZoom(this.zoom * Math.exp(-event.deltaY * 0.002));
+    event.preventDefault();
+  };
+
+  private erase(point: InkPoint): void {
+    if (this.document === null) return;
+    const remaining = this.document.strokes.filter((stroke) => !strokeHitsPoint(stroke, point, ERASER_RADIUS));
+    if (remaining.length !== this.document.strokes.length) {
+      this.document.strokes = remaining;
+      this.eraserChanged = true;
+      this.invalidateCache();
+    }
+  }
+
+  private pushHistory(): void {
+    if (this.document === null) return;
+    this.undoStack.push(this.document.strokes);
+    if (this.undoStack.length > MAX_HISTORY) this.undoStack.shift();
+    this.redoStack = [];
+  }
+
+  private changed(): void {
+    this.invalidateCache();
+    this.options.onChange();
+  }
+
+  private resize(): void {
+    const bounds = this.canvas.getBoundingClientRect();
+    this.viewportWidth = Math.max(1, bounds.width);
+    this.viewportHeight = Math.max(1, bounds.height);
+    const areaLimitScale = Math.sqrt(MAX_DISPLAY_PIXELS / (this.viewportWidth * this.viewportHeight));
+    this.deviceScale = Math.min(MAX_DEVICE_PIXEL_RATIO, window.devicePixelRatio || 1, areaLimitScale);
+    const width = Math.round(this.viewportWidth * this.deviceScale);
+    const height = Math.round(this.viewportHeight * this.deviceScale);
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.cacheCanvas.width = width;
+      this.cacheCanvas.height = height;
+      this.invalidateCache();
+    }
+  }
+
+  private scheduleResize(): void {
+    if (this.resizeFrame !== null) return;
+    this.resizeFrame = window.requestAnimationFrame(() => {
+      this.resizeFrame = null;
+      this.resize();
+    });
+  }
+
+  private getTransform(): { scale: number; offsetX: number; offsetY: number } {
+    if (this.document === null) return { scale: 1, offsetX: 0, offsetY: 0 };
+    const gutter = 24;
+    const fit = Math.min((this.viewportWidth - gutter * 2) / this.document.width, (this.viewportHeight - gutter * 2) / this.document.height);
+    const scale = Math.max(0.01, fit * this.zoom);
+    return {
+      scale,
+      offsetX: (this.viewportWidth - this.document.width * scale) / 2,
+      offsetY: (this.viewportHeight - this.document.height * scale) / 2,
+    };
+  }
+
+  private rebuildCache(): void {
+    if (this.document === null) return;
+    const transform = this.getTransform();
+    const palette = this.getPalette();
+    renderDocument(this.cacheContext, this.document, {
+      scale: transform.scale * this.deviceScale,
+      offsetX: transform.offsetX * this.deviceScale,
+      offsetY: transform.offsetY * this.deviceScale,
+      ...palette,
+    });
+    this.cacheDirty = false;
+  }
+
+  private drawFrame(): void {
+    this.frameRequested = false;
+    if (this.document === null) return;
+    if (this.cacheDirty) this.rebuildCache();
+    this.context.setTransform(1, 0, 0, 1, 0, 0);
+    this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.context.drawImage(this.cacheCanvas, 0, 0);
+    if (this.currentStroke !== null) {
+      const transform = this.getTransform();
+      this.context.save();
+      this.context.translate(transform.offsetX * this.deviceScale, transform.offsetY * this.deviceScale);
+      this.context.scale(transform.scale * this.deviceScale, transform.scale * this.deviceScale);
+      this.context.beginPath();
+      this.context.rect(0, 0, this.document.width, this.document.height);
+      this.context.clip();
+      renderStroke(this.context, this.currentStroke, this.getPalette().ink);
+      this.context.restore();
+    }
+  }
+
+  private requestFrame(): void {
+    if (this.frameRequested) return;
+    this.frameRequested = true;
+    window.requestAnimationFrame(() => this.drawFrame());
+  }
+
+  private invalidateCache(): void {
+    this.cacheDirty = true;
+    this.requestFrame();
+  }
+
+  private commitStrokeToCache(stroke: InkStroke): void {
+    if (this.document === null || this.cacheDirty) {
+      this.invalidateCache();
+      return;
+    }
+    const transform = this.getTransform();
+    this.cacheContext.save();
+    this.cacheContext.translate(transform.offsetX * this.deviceScale, transform.offsetY * this.deviceScale);
+    this.cacheContext.scale(transform.scale * this.deviceScale, transform.scale * this.deviceScale);
+    this.cacheContext.beginPath();
+    this.cacheContext.rect(0, 0, this.document.width, this.document.height);
+    this.cacheContext.clip();
+    renderStroke(this.cacheContext, stroke, this.getPalette().ink);
+    this.cacheContext.restore();
+    this.requestFrame();
+  }
+
+  private getPalette(): { background: string; guide: string; ink: string } {
+    const dark = this.canvas.ownerDocument.body.classList.contains("theme-dark");
+    return dark
+      ? { background: "#1e1e1e", guide: "#464646", ink: "#ffffff" }
+      : { background: "#ffffff", guide: "#dfe3e8", ink: "#111111" };
+  }
+
+  private toPoint(event: PointerEvent): InkPoint {
+    const transform = this.getTransform();
+    return pointFromPointer(event, this.canvas, transform.scale, transform.offsetX, transform.offsetY);
+  }
+
+  private isOnPage(point: InkPoint): boolean {
+    return this.document !== null && point.x >= 0 && point.y >= 0 && point.x <= this.document.width && point.y <= this.document.height;
+  }
+}
+
+function createStrokeId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDetachedCanvas(host: HTMLElement): HTMLCanvasElement {
+  const canvas = host.createEl("canvas");
+  canvas.remove();
+  return canvas;
+}

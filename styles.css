@@ -1,0 +1,241 @@
+.view-content.inkflow-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  container-type: inline-size;
+}
+
+.inkflow-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  user-select: none;
+}
+
+.inkflow-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inkflow-status {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
+}
+
+.inkflow-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.inkflow-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.inkflow-delete-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  color: var(--text-faint);
+}
+
+.inkflow-delete-button:hover,
+.inkflow-delete-button:focus-visible {
+  color: var(--text-error);
+}
+
+.inkflow-delete-button:disabled {
+  visibility: hidden;
+}
+
+.inkflow-toolbar {
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 5px 9px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  scrollbar-width: none;
+  user-select: none;
+}
+
+.inkflow-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.inkflow-tool-group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--background-secondary);
+}
+
+.inkflow-tool-group + .inkflow-tool-group {
+  margin-left: 2px;
+}
+
+.inkflow-view .inkflow-icon-button,
+.inkflow-view .inkflow-width-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.inkflow-view .inkflow-icon-button:hover,
+.inkflow-view .inkflow-icon-button:focus-visible,
+.inkflow-view .inkflow-width-button:hover,
+.inkflow-view .inkflow-width-button:focus-visible {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.inkflow-view .inkflow-icon-button:focus-visible,
+.inkflow-view .inkflow-width-button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.inkflow-view .inkflow-icon-button.is-active,
+.inkflow-view .inkflow-icon-button.is-active:hover,
+.inkflow-view .inkflow-icon-button.is-active:focus-visible,
+.inkflow-view .inkflow-width-button.is-active,
+.inkflow-view .inkflow-width-button.is-active:hover,
+.inkflow-view .inkflow-width-button.is-active:focus-visible {
+  background: var(--text-normal);
+  color: var(--background-primary);
+}
+
+.inkflow-icon-button:disabled {
+  opacity: 0.24;
+}
+
+.inkflow-width-sample {
+  display: block;
+  width: 15px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.inkflow-width-button-1 .inkflow-width-sample {
+  height: 2px;
+}
+
+.inkflow-width-button-2 .inkflow-width-sample {
+  height: 4px;
+}
+
+.inkflow-width-button-3 .inkflow-width-sample {
+  height: 7px;
+}
+
+.inkflow-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+
+.inkflow-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.inkflow-canvas[data-tool="eraser"] {
+  cursor: cell;
+}
+
+.inkflow-canvas:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--text-muted);
+}
+
+@container (max-width: 420px) {
+  .inkflow-header {
+    min-height: 38px;
+    padding-inline: 10px;
+  }
+
+  .inkflow-toolbar {
+    gap: 5px;
+    padding-inline: 6px;
+  }
+
+  .inkflow-tool-group + .inkflow-tool-group {
+    margin-left: 0;
+  }
+}
+
+.is-mobile .inkflow-header {
+  min-height: 44px;
+  padding-inline: 12px;
+}
+
+.is-mobile .inkflow-toolbar {
+  min-height: 54px;
+  padding-inline: 8px;
+}
+
+.is-mobile .inkflow-icon-button,
+.is-mobile .inkflow-width-button {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+}
+
+@media (forced-colors: active) {
+  .inkflow-icon-button.is-active,
+  .inkflow-width-button.is-active {
+    border: 1px solid ButtonText;
+  }
+}
