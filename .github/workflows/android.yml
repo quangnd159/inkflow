@@ -3,8 +3,8 @@ name: Android
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    tags: ["poc-*"]
+    branches: ["codex/eink-studio-poc"]
+    tags: ["eink-studio-poc-*"]
 
 permissions:
   contents: write
@@ -32,12 +32,12 @@ jobs:
           path: app/build/outputs/apk/debug/eink-studio-lab.apk
           if-no-files-found: error
       - name: Publish tagged build
-        if: startsWith(github.ref, 'refs/tags/poc-')
+        if: startsWith(github.ref, 'refs/tags/eink-studio-poc-')
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
           "app/build/outputs/apk/debug/eink-studio-lab.apk"
           --prerelease
-          --title "Eink Studio Lab ${GITHUB_REF_NAME#poc-}"
+          --title "Eink Studio Lab ${GITHUB_REF_NAME#eink-studio-poc-}"
           --notes "Standalone BOOX-native e-ink drawing proof of concept. Autosaves one local canvas. No network or storage permissions."
