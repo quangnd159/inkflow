@@ -1,14 +1,16 @@
 import { clamp, shouldAddPoint, strokeHitsPoint } from "./geometry";
-import { renderDocument, renderStroke, pointFromPointer } from "./render";
+import { renderDocument, renderStroke, renderStrokeIncrement, pointFromPointer } from "./render";
 import type { InkDocument, InkPoint, InkStroke, Tool } from "./model";
 
 const MAX_DEVICE_PIXEL_RATIO = 2;
 const MAX_DISPLAY_PIXELS = 6_000_000;
+const MAX_EINK_DISPLAY_PIXELS = 2_000_000;
 const MAX_HISTORY = 60;
 const ERASER_RADIUS = 24;
 const EXPORT_SCALE = 1;
 
 export interface InkCanvasOptions {
+  getEInkMode: () => boolean;
   getPalmRejection: () => boolean;
   onChange: () => void;
   onToolChange: (tool: Tool) => void;
@@ -36,6 +38,7 @@ export class InkCanvas {
   private viewportWidth = 1;
   private viewportHeight = 1;
   private deviceScale = 1;
+  private readonly useRawPointerEvents: boolean;
 
   constructor(parent: HTMLElement, private readonly options: InkCanvasOptions) {
     this.canvas = parent.createEl("canvas", { cls: "inkflow-canvas", attr: { tabindex: "0", "aria-label": "Handwriting canvas" } });
@@ -47,6 +50,7 @@ export class InkCanvas {
     this.cacheContext = cacheContext;
     this.resizeObserver = new ResizeObserver(() => this.scheduleResize());
     this.resizeObserver.observe(parent);
+    this.useRawPointerEvents = "onpointerrawupdate" in this.canvas;
     this.bindEvents();
   }
 
@@ -74,8 +78,12 @@ export class InkCanvas {
     this.invalidateCache();
   }
 
+  refreshPerformance(): void {
+    this.scheduleResize();
+  }
+
   setZoom(zoom: number): void {
-    this.zoom = clamp(zoom, 0.65, 3);
+    this.zoom = clamp(zoom, 1, 3);
     this.invalidateCache();
   }
 
@@ -129,12 +137,13 @@ export class InkCanvas {
 
   destroy(): void {
     this.resizeObserver.disconnect();
-    if (this.resizeFrame !== null) window.cancelAnimationFrame(this.resizeFrame);
+    if (this.resizeFrame !== null) this.getWindow().cancelAnimationFrame(this.resizeFrame);
   }
 
   private bindEvents(): void {
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
+    if (this.useRawPointerEvents) this.canvas.addEventListener("pointerrawupdate", this.onPointerRawUpdate);
+    else this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -154,7 +163,7 @@ export class InkCanvas {
     this.pushHistory();
     if (this.tool === "pen") {
       this.currentStroke = { id: createStrokeId(), color: "auto", width: this.width, points: [point] };
-      this.requestFrame();
+      this.drawStrokeIncrement(this.currentStroke, 0);
     } else {
       this.eraserChanged = false;
       this.erase(point);
@@ -164,6 +173,7 @@ export class InkCanvas {
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (event.pointerId !== this.activePointer || this.document === null) return;
+    const firstNewPointIndex = this.currentStroke?.points.length ?? 0;
     const coalesced = event.getCoalescedEvents?.();
     const samples = coalesced !== undefined && coalesced.length > 0 ? coalesced : [event];
     for (const sample of samples) {
@@ -175,14 +185,27 @@ export class InkCanvas {
         this.erase(point);
       }
     }
-    this.requestFrame();
+    if (this.currentStroke !== null && this.currentStroke.points.length > firstNewPointIndex) {
+      this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex);
+    }
     event.preventDefault();
+  };
+
+  private readonly onPointerRawUpdate = (event: Event): void => {
+    const PointerEventClass = this.canvas.ownerDocument.defaultView?.PointerEvent;
+    if (PointerEventClass !== undefined && event instanceof PointerEventClass) this.onPointerMove(event);
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     if (event.pointerId !== this.activePointer || this.document === null) return;
     if (event.pointerType === "pen") this.penIsDown = false;
     if (this.currentStroke !== null) {
+      const firstNewPointIndex = this.currentStroke.points.length;
+      const finalPoint = this.toPoint(event);
+      if (this.isOnPage(finalPoint) && shouldAddPoint(this.currentStroke.points, finalPoint)) {
+        this.currentStroke.points.push(finalPoint);
+        this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex);
+      }
       const committed = this.currentStroke;
       this.document.strokes = [...this.document.strokes, committed];
       this.currentStroke = null;
@@ -222,7 +245,6 @@ export class InkCanvas {
     if (remaining.length !== this.document.strokes.length) {
       this.document.strokes = remaining;
       this.eraserChanged = true;
-      this.invalidateCache();
     }
   }
 
@@ -242,8 +264,11 @@ export class InkCanvas {
     const bounds = this.canvas.getBoundingClientRect();
     this.viewportWidth = Math.max(1, bounds.width);
     this.viewportHeight = Math.max(1, bounds.height);
-    const areaLimitScale = Math.sqrt(MAX_DISPLAY_PIXELS / (this.viewportWidth * this.viewportHeight));
-    this.deviceScale = Math.min(MAX_DEVICE_PIXEL_RATIO, window.devicePixelRatio || 1, areaLimitScale);
+    const eInkMode = this.options.getEInkMode();
+    const pixelLimit = eInkMode ? MAX_EINK_DISPLAY_PIXELS : MAX_DISPLAY_PIXELS;
+    const densityLimit = eInkMode ? 1 : MAX_DEVICE_PIXEL_RATIO;
+    const areaLimitScale = Math.sqrt(pixelLimit / (this.viewportWidth * this.viewportHeight));
+    this.deviceScale = Math.min(densityLimit, this.getWindow().devicePixelRatio || 1, areaLimitScale);
     const width = Math.round(this.viewportWidth * this.deviceScale);
     const height = Math.round(this.viewportHeight * this.deviceScale);
     if (this.canvas.width !== width || this.canvas.height !== height) {
@@ -257,7 +282,7 @@ export class InkCanvas {
 
   private scheduleResize(): void {
     if (this.resizeFrame !== null) return;
-    this.resizeFrame = window.requestAnimationFrame(() => {
+    this.resizeFrame = this.getWindow().requestAnimationFrame(() => {
       this.resizeFrame = null;
       this.resize();
     });
@@ -265,9 +290,8 @@ export class InkCanvas {
 
   private getTransform(): { scale: number; offsetX: number; offsetY: number } {
     if (this.document === null) return { scale: 1, offsetX: 0, offsetY: 0 };
-    const gutter = 24;
-    const fit = Math.min((this.viewportWidth - gutter * 2) / this.document.width, (this.viewportHeight - gutter * 2) / this.document.height);
-    const scale = Math.max(0.01, fit * this.zoom);
+    const cover = Math.max(this.viewportWidth / this.document.width, this.viewportHeight / this.document.height);
+    const scale = Math.max(0.01, cover * this.zoom);
     return {
       scale,
       offsetX: (this.viewportWidth - this.document.width * scale) / 2,
@@ -311,7 +335,7 @@ export class InkCanvas {
   private requestFrame(): void {
     if (this.frameRequested) return;
     this.frameRequested = true;
-    window.requestAnimationFrame(() => this.drawFrame());
+    this.getWindow().requestAnimationFrame(() => this.drawFrame());
   }
 
   private invalidateCache(): void {
@@ -333,7 +357,19 @@ export class InkCanvas {
     this.cacheContext.clip();
     renderStroke(this.cacheContext, stroke, this.getPalette().ink);
     this.cacheContext.restore();
-    this.requestFrame();
+  }
+
+  private drawStrokeIncrement(stroke: InkStroke, firstNewPointIndex: number): void {
+    if (this.document === null) return;
+    const transform = this.getTransform();
+    this.context.save();
+    this.context.translate(transform.offsetX * this.deviceScale, transform.offsetY * this.deviceScale);
+    this.context.scale(transform.scale * this.deviceScale, transform.scale * this.deviceScale);
+    this.context.beginPath();
+    this.context.rect(0, 0, this.document.width, this.document.height);
+    this.context.clip();
+    renderStrokeIncrement(this.context, stroke, this.getPalette().ink, firstNewPointIndex);
+    this.context.restore();
   }
 
   private getPalette(): { background: string; guide: string; ink: string } {
@@ -350,6 +386,10 @@ export class InkCanvas {
 
   private isOnPage(point: InkPoint): boolean {
     return this.document !== null && point.x >= 0 && point.y >= 0 && point.x <= this.document.width && point.y <= this.document.height;
+  }
+
+  private getWindow(): Window {
+    return this.canvas.ownerDocument.defaultView ?? window;
   }
 }
 

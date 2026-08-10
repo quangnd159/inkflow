@@ -2,6 +2,16 @@
 
 All notable changes to Inkflow are documented here.
 
+## 1.3.0 — 2026-08-10
+
+- Paint new ink segments directly instead of clearing and compositing the full visible canvas on every pen frame.
+- Consume `pointerrawupdate` and coalesced pen samples when the platform supplies them.
+- Add an e-ink profile that caps display density, defers PNG encoding until writing pauses, and is automatically selected on standards-compliant slow-update displays.
+- Defer eraser redraws until pen-up to prevent repeated full-screen e-ink refreshes.
+- Make autosave a true trailing debounce so continuous writing never triggers PNG encoding mid-stroke burst.
+- Keep animation and pointer APIs scoped to the canvas window for reliable use in Obsidian pop-out windows.
+- Make dotted paper full-bleed so the complete visible pane is writable with no inset sheet or dead margins.
+
 ## 1.2.0 — 2026-08-10
 
 - Added a quiet, context-aware trash action for removing handwriting while keeping its Markdown note.

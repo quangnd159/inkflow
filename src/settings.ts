@@ -5,6 +5,7 @@ export interface InkFlowSettings {
   attachmentFolder: string;
   defaultWidth: number;
   palmRejection: boolean;
+  eInkMode: boolean;
   autoFollowActiveNote: boolean;
   associations: Record<string, string>;
 }
@@ -13,11 +14,12 @@ export const DEFAULT_SETTINGS: InkFlowSettings = {
   attachmentFolder: "Attachments/InkFlow",
   defaultWidth: 5,
   palmRejection: true,
+  eInkMode: false,
   autoFollowActiveNote: true,
   associations: {},
 };
 
-type VisibleSetting = "attachmentFolder" | "palmRejection" | "autoFollowActiveNote";
+type VisibleSetting = "attachmentFolder" | "palmRejection" | "eInkMode" | "autoFollowActiveNote";
 
 export class InkFlowSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: InkFlowPlugin) {
@@ -47,6 +49,15 @@ export class InkFlowSettingTab extends PluginSettingTab {
         },
       },
       {
+        name: "E-ink mode",
+        desc: "Reduce display work and defer snapshots for e-ink devices. Slow-update displays are also detected automatically.",
+        control: {
+          type: "toggle",
+          key: "eInkMode",
+          defaultValue: DEFAULT_SETTINGS.eInkMode,
+        },
+      },
+      {
         name: "Follow active note",
         desc: "Switch the handwriting canvas when you open another Markdown note.",
         control: {
@@ -59,7 +70,7 @@ export class InkFlowSettingTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
-    if (key === "attachmentFolder" || key === "palmRejection" || key === "autoFollowActiveNote") {
+    if (key === "attachmentFolder" || key === "palmRejection" || key === "eInkMode" || key === "autoFollowActiveNote") {
       return this.plugin.settings[key];
     }
     return undefined;
@@ -70,6 +81,9 @@ export class InkFlowSettingTab extends PluginSettingTab {
       this.plugin.settings.attachmentFolder = value.trim().replace(/^\/+|\/+$/g, "") || DEFAULT_SETTINGS.attachmentFolder;
     } else if (key === "palmRejection" && typeof value === "boolean") {
       this.plugin.settings.palmRejection = value;
+    } else if (key === "eInkMode" && typeof value === "boolean") {
+      this.plugin.settings.eInkMode = value;
+      this.plugin.refreshCanvasPerformance();
     } else if (key === "autoFollowActiveNote" && typeof value === "boolean") {
       this.plugin.settings.autoFollowActiveNote = value;
     } else {

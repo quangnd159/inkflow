@@ -7,7 +7,8 @@ import { createInkDocument, type InkDocument, type Tool } from "./model";
 
 export const INKFLOW_VIEW_TYPE = "inkflow-view";
 const WIDTHS = [3, 5, 8] as const;
-const SAVE_DELAY_MS = 120;
+const SAVE_DELAY_MS = 320;
+const EINK_SAVE_DELAY_MS = 700;
 
 export class InkFlowView extends ItemView {
   private inkCanvas: InkCanvas | null = null;
@@ -79,6 +80,10 @@ export class InkFlowView extends ItemView {
     if ((this.inkDocument?.strokes.length ?? 0) > 0) this.markChanged();
   }
 
+  handlePerformanceChange(): void {
+    this.inkCanvas?.refreshPerformance();
+  }
+
   requestDelete(): void {
     if (this.currentNote === null || this.paths === null || !this.hasHandwriting()) return;
     const noteName = this.currentNote.basename;
@@ -137,6 +142,7 @@ export class InkFlowView extends ItemView {
 
     const stage = this.contentEl.createDiv({ cls: "inkflow-stage" });
     this.inkCanvas = new InkCanvas(stage, {
+      getEInkMode: () => this.plugin.isEInkOptimized(this.contentEl.ownerDocument),
       getPalmRejection: () => this.plugin.settings.palmRejection,
       onChange: () => this.markChanged(),
       onToolChange: (tool) => this.updateToolButtons(tool),
@@ -186,11 +192,11 @@ export class InkFlowView extends ItemView {
     this.dirty = true;
     this.setStatus("Saving");
     this.updateControls();
-    if (this.saveTimer !== null) return;
+    this.clearSaveTimer();
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
       void this.saveNow();
-    }, SAVE_DELAY_MS);
+    }, this.plugin.isEInkOptimized(this.contentEl.ownerDocument) ? EINK_SAVE_DELAY_MS : SAVE_DELAY_MS);
   }
 
   private async saveNow(): Promise<void> {

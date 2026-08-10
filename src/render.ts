@@ -67,29 +67,35 @@ export function renderPage(
 }
 
 export function renderStroke(context: CanvasRenderingContext2D, stroke: InkStroke, color = stroke.color): void {
+  renderStrokeIncrement(context, stroke, color, 0);
+}
+
+export function renderStrokeIncrement(
+  context: CanvasRenderingContext2D,
+  stroke: InkStroke,
+  color: string,
+  firstNewPointIndex: number,
+): void {
   const first = stroke.points[0];
   if (first === undefined) return;
-  if (stroke.points.length === 1) {
-    context.beginPath();
-    context.fillStyle = color;
-    context.arc(first.x, first.y, pressureWidth(stroke.width, first.pressure) / 2, 0, Math.PI * 2);
-    context.fill();
-    return;
-  }
   context.save();
+  context.fillStyle = color;
   context.strokeStyle = color;
   context.lineCap = "round";
   context.lineJoin = "round";
-  for (let index = 1; index < stroke.points.length; index += 1) {
+  if (firstNewPointIndex === 0) {
+    context.beginPath();
+    context.arc(first.x, first.y, pressureWidth(stroke.width, first.pressure) / 2, 0, Math.PI * 2);
+    context.fill();
+  }
+  for (let index = Math.max(1, firstNewPointIndex); index < stroke.points.length; index += 1) {
     const start = stroke.points[index - 1];
     const end = stroke.points[index];
     if (start === undefined || end === undefined) continue;
     context.beginPath();
     context.lineWidth = pressureWidth(stroke.width, (start.pressure + end.pressure) / 2);
     context.moveTo(start.x, start.y);
-    const next = stroke.points[index + 1];
-    if (next === undefined) context.lineTo(end.x, end.y);
-    else context.quadraticCurveTo(end.x, end.y, (end.x + next.x) / 2, (end.y + next.y) / 2);
+    context.lineTo(end.x, end.y);
     context.stroke();
   }
   context.restore();

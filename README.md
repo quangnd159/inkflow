@@ -7,12 +7,13 @@ It is intentionally not a whiteboard or diagramming system. Inkflow does one thi
 ## Why it feels different
 
 - **One gesture to ink.** Open Inkflow from the ribbon or command palette and start writing.
-- **Made for styluses.** Pressure-sensitive strokes, coalesced pointer samples, palm rejection, and large touch targets.
-- **Fast over long sessions.** Completed strokes are cached; only the live stroke is redrawn while writing. Display pixel density is capped to protect e-ink and mobile GPUs.
+- **Made for styluses.** Pressure-sensitive strokes, raw and coalesced pointer samples, palm rejection, and large touch targets.
+- **Fast over long sessions.** New pen segments go straight to the display without clearing or repainting the canvas. Completed strokes are cached and display pixel density is capped to protect e-ink and mobile GPUs.
 - **Portable by default.** Every canvas produces an ordinary PNG embedded with Obsidian's `![[...]]` syntax and refreshes visible embeds after each short stroke burst.
 - **Editable and recoverable.** A compact `.ink.json` sidecar preserves every point. Rename-safe associations live in plugin data, leaving no bookkeeping text in your notes.
 - **Disposable by design.** Delete handwriting in one action: the embed disappears and its private source and image follow your Obsidian trash preference. Deleting the parent note cleans them up automatically.
 - **Distraction-free.** Ink automatically follows the theme, paper is always dotted, and the only choices while writing are pen, eraser, and three useful widths.
+- **Full-bleed.** Dotted paper covers the entire writing pane—there is no inset page edge or dead margin to find on an e-ink screen.
 - **Local and offline.** No accounts, analytics, network calls, native modules, or runtime dependencies.
 
 ## Use
@@ -32,9 +33,15 @@ The canvas follows the active note by default. Turn this off in **Settings → I
 | Undo / redo | Toolbar or platform-standard `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` |
 | Stroke width | Thin, regular, or bold toolbar buttons |
 | Delete handwriting | Trash button beside the save status, or **Delete handwriting from current note** in the command palette |
-| Zoom | `Ctrl/Cmd` + wheel |
+| Zoom in / reset | `Ctrl/Cmd` + wheel |
 
 The eraser removes whole strokes. This is deliberate: it is predictable, fast, and makes undo exact.
+
+## E-ink and Boox
+
+Enable **Settings → Inkflow → E-ink mode** on a Boox or other e-ink tablet. It renders the display canvas at native CSS resolution, avoids full-canvas work while the pen is moving, redraws once after an erasure, and waits for a writing pause before encoding the PNG snapshot. Browsers that report the standards-based `(update: slow)` media feature receive this profile automatically.
+
+On Boox, open **Control Center → EInkWise** for Obsidian and use **Speed mode**. If ghosting accumulates, trigger a manual full refresh. Boox's separate handwriting optimization is available only for selected supported Android apps, so it may not be offered for Obsidian; Inkflow instead minimizes the browser work and screen changes under its control.
 
 ## Files and privacy
 
