@@ -22,6 +22,8 @@ import com.onyx.android.sdk.pen.RawInputCallback;
 import com.onyx.android.sdk.pen.TouchHelper;
 import com.onyx.android.sdk.pen.data.TouchPointList;
 
+import java.util.Collections;
+
 public final class MainActivity extends Activity {
     private static final String TAG = "InkflowBooxLab";
     private static final float STROKE_WIDTH = 3.0f;
@@ -117,7 +119,7 @@ public final class MainActivity extends Activity {
             inkSurface.getLocalVisibleRect(limit);
             touchHelper
                     .setStrokeWidth(STROKE_WIDTH)
-                    .setLimitRect(limit)
+                    .setLimitRect(limit, Collections.emptyList())
                     .openRawDrawing();
             touchHelper.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN);
             touchHelper.setRawDrawingEnabled(resumed);
