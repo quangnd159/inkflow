@@ -293,7 +293,6 @@ public final class MainActivity extends Activity {
             canvas = surface.getHolder().lockCanvas();
             if (canvas == null) return;
             canvas.drawColor(Color.WHITE);
-            drawDots(canvas);
             Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
             for (InkDocument.Layer layer : document.layers()) {
                 if (!layer.visible) continue;
@@ -303,17 +302,6 @@ public final class MainActivity extends Activity {
             Log.e(TAG, "Unable to render canvas", error);
         } finally {
             if (canvas != null) surface.getHolder().unlockCanvasAndPost(canvas);
-        }
-    }
-
-    private void drawDots(Canvas canvas) {
-        Paint dots = new Paint(Paint.ANTI_ALIAS_FLAG);
-        dots.setColor(0xFFD8D8D8);
-        dots.setStyle(Paint.Style.FILL);
-        float spacing = dp(28);
-        float radius = Math.max(1f, getResources().getDisplayMetrics().density);
-        for (float y = spacing; y < canvas.getHeight(); y += spacing) {
-            for (float x = spacing; x < canvas.getWidth(); x += spacing) canvas.drawCircle(x, y, radius, dots);
         }
     }
 

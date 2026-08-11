@@ -8,6 +8,7 @@ The app targets BOOX devices because Onyx exposes a raw pen pipeline that can dr
 
 - Pressure-aware pen, pencil, and marker brushes
 - Four-tone e-ink palette and three brush sizes
+- Clean paper canvas for dense linework and broad grayscale values
 - Pixel/segment eraser that splits strokes instead of deleting whole strokes
 - Multiple layers with add, select, rename, reorder, visibility, clear, and delete controls
 - Undo and redo for marks, erasing, and layer mutations
