@@ -10,8 +10,8 @@ android {
         applicationId = "dev.einkstudio.poc"
         minSdk = 26
         targetSdk = 30
-        versionCode = 1
-        versionName = "0.1.0-poc"
+        versionCode = 2
+        versionName = "0.2.0-poc"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -47,4 +47,6 @@ android {
 dependencies {
     implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.4")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

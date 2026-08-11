@@ -9,12 +9,17 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 final class ProjectStore {
     private static final String TAG = "EinkStudioStore";
     private static final String FILE_NAME = "canvas.json";
+    private static final String BACKUP_NAME = "canvas.json.bak";
     private final File directory;
     private final ExecutorService writer = Executors.newSingleThreadExecutor();
 
@@ -24,7 +29,18 @@ final class ProjectStore {
 
     InkDocument load() {
         File file = new File(directory, FILE_NAME);
-        if (!file.isFile()) return new InkDocument();
+        InkDocument loaded = read(file);
+        if (loaded != null) return loaded;
+        loaded = read(new File(directory, BACKUP_NAME));
+        if (loaded != null) {
+            save(loaded);
+            return loaded;
+        }
+        return new InkDocument();
+    }
+
+    private InkDocument read(File file) {
+        if (!file.isFile()) return null;
         try (FileInputStream input = new FileInputStream(file)) {
             byte[] bytes = new byte[(int) file.length()];
             int offset = 0;
@@ -33,10 +49,13 @@ final class ProjectStore {
                 if (count < 0) break;
                 offset += count;
             }
-            return InkDocument.fromJson(new JSONObject(new String(bytes, 0, offset, StandardCharsets.UTF_8)));
+            JSONObject json = new JSONObject(new String(bytes, 0, offset, StandardCharsets.UTF_8));
+            InkDocument document = InkDocument.fromJson(json);
+            if (json.optInt("version", -1) == InkDocument.LEGACY_FORMAT_VERSION) save(document);
+            return document;
         } catch (Exception error) {
-            Log.e(TAG, "Unable to load project", error);
-            return new InkDocument();
+            Log.e(TAG, "Unable to load " + file.getName(), error);
+            return null;
         }
     }
 
@@ -47,11 +66,19 @@ final class ProjectStore {
 
     void close() {
         writer.shutdown();
+        try {
+            if (!writer.awaitTermination(2, TimeUnit.SECONDS)) {
+                Log.w(TAG, "Autosave writer did not finish before shutdown");
+            }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void writeSnapshot(InkDocument snapshot) {
-        File temporary = new File(directory, FILE_NAME + ".tmp");
+        File temporary = new File(directory, FILE_NAME + ".new");
         File target = new File(directory, FILE_NAME);
+        File backup = new File(directory, BACKUP_NAME);
         try {
             if (!directory.exists() && !directory.mkdirs()) {
                 throw new IllegalStateException("Unable to create project folder");
@@ -62,11 +89,14 @@ final class ProjectStore {
                 output.flush();
                 output.getFD().sync();
             }
-            if (target.exists() && !target.delete()) {
-                throw new IllegalStateException("Unable to replace project");
+            if (target.isFile()) {
+                Files.copy(target.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
-            if (!temporary.renameTo(target)) {
-                throw new IllegalStateException("Unable to commit project");
+            try {
+                Files.move(temporary.toPath(), target.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (Exception error) {
             Log.e(TAG, "Unable to save project", error);

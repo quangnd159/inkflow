@@ -18,5 +18,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "EinkStudioPoc"
+rootProject.name = "InkySketch"
 include(":app")

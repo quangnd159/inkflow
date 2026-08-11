@@ -5,7 +5,7 @@
     <application
         android:name=".EinkStudioApplication"
         android:allowBackup="false"
-        android:label="Eink Studio Lab"
+        android:label="Inky Sketch"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         tools:replace="android:allowBackup,android:label">

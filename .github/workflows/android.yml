@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: ["codex/eink-studio-poc"]
-    tags: ["eink-studio-poc-*"]
+    tags: ["eink-studio-poc-*", "inky-sketch-*"]
 
 permissions:
   contents: write
@@ -22,22 +22,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: "8.9"
-      - name: Build proof of concept
-        run: gradle assembleDebug --stacktrace
+      - name: Test and build proof of concept
+        run: gradle testDebugUnitTest assembleDebug --stacktrace
       - name: Name installable APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/eink-studio-lab.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/inky-sketch.apk
       - uses: actions/upload-artifact@v5
         with:
-          name: eink-studio-lab
-          path: app/build/outputs/apk/debug/eink-studio-lab.apk
+          name: inky-sketch
+          path: app/build/outputs/apk/debug/inky-sketch.apk
           if-no-files-found: error
       - name: Publish tagged build
-        if: startsWith(github.ref, 'refs/tags/eink-studio-poc-')
+        if: startsWith(github.ref, 'refs/tags/eink-studio-poc-') || startsWith(github.ref, 'refs/tags/inky-sketch-')
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
-          "app/build/outputs/apk/debug/eink-studio-lab.apk"
+          "app/build/outputs/apk/debug/inky-sketch.apk"
           --prerelease
-          --title "Eink Studio Lab ${GITHUB_REF_NAME#eink-studio-poc-}"
-          --notes "Standalone BOOX-native e-ink drawing proof of concept. Autosaves one local canvas. No network or storage permissions."
+          --title "Inky Sketch ${GITHUB_REF_NAME#inky-sketch-}"
+          --notes "Standalone, offline BOOX-native drawing POC with pressure-aware pen, pencil, and marker brushes; a pixel/segment eraser; layers; undo/redo; v1 canvas migration; and atomic local autosave. No permissions required."

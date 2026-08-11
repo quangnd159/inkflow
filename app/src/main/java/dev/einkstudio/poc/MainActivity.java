@@ -18,8 +18,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.onyx.android.sdk.data.note.TouchPoint;
@@ -36,11 +38,13 @@ import java.util.List;
 
 public final class MainActivity extends Activity {
     private static final String TAG = "EinkStudio";
-    private static final float[] WIDTHS = {3f, 5f, 8f};
+    private static final float[] WIDTHS = {2.5f, 5f, 9f};
+    private static final int[] COLORS = {0xFF000000, 0xFF444444, 0xFF888888, 0xFFBBBBBB};
+    private static final String[] COLOR_NAMES = {"Black", "Dark", "Gray", "Light"};
     private static final int MAX_HISTORY = 50;
-    private static final float ERASER_RADIUS_DP = 28f;
+    private static final float ERASER_RADIUS_DP = 22f;
 
-    private enum Tool { PEN, ERASER }
+    private enum Tool { PEN, PENCIL, MARKER, ERASER }
 
     private SurfaceView surface;
     private LinearLayout topBar;
@@ -49,15 +53,18 @@ public final class MainActivity extends Activity {
     private TouchHelper touchHelper;
     private ProjectStore projectStore;
     private InkDocument document;
-    private final Deque<List<InkDocument.Stroke>> undo = new ArrayDeque<>();
-    private final Deque<List<InkDocument.Stroke>> redo = new ArrayDeque<>();
+    private final Deque<InkDocument> undo = new ArrayDeque<>();
+    private final Deque<InkDocument> redo = new ArrayDeque<>();
+    private final List<Button> brushButtons = new ArrayList<>();
     private final List<Button> widthButtons = new ArrayList<>();
-    private Button penButton;
+    private final List<Button> colorButtons = new ArrayList<>();
     private Button eraserButton;
     private Button undoButton;
     private Button redoButton;
+    private Button layersButton;
     private Tool tool = Tool.PEN;
     private float strokeWidth = WIDTHS[1];
+    private int strokeColor = COLORS[0];
     private List<InkDocument.Point> completedRawPoints = Collections.emptyList();
     private boolean surfaceReady;
     private boolean initialized;
@@ -83,78 +90,85 @@ public final class MainActivity extends Activity {
         surface = new SurfaceView(this);
         surface.setBackgroundColor(Color.WHITE);
         root.addView(surface, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-        ));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         topBar = new LinearLayout(this);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(18), dp(10), dp(18), dp(10));
-        topBar.setBackgroundColor(0xF7FFFFFF);
+        topBar.setPadding(dp(18), dp(8), dp(18), dp(8));
+        topBar.setBackgroundColor(0xFAFFFFFF);
         TextView title = new TextView(this);
-        title.setText("Eink Studio");
+        title.setText("Inky Sketch");
         title.setTextColor(Color.BLACK);
         title.setTextSize(18);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         topBar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1f));
         status = new TextView(this);
-        status.setText("Preparing ink…");
-        status.setTextColor(0xFF555555);
+        status.setTextColor(0xFF444444);
         status.setTextSize(13);
         status.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         topBar.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)));
         root.addView(topBar, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(64),
-                Gravity.TOP
-        ));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(60), Gravity.TOP));
 
         toolbar = new LinearLayout(this);
-        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setOrientation(LinearLayout.VERTICAL);
         toolbar.setGravity(Gravity.CENTER);
-        toolbar.setPadding(dp(8), dp(8), dp(8), dp(8));
-        toolbar.setBackgroundColor(0xF7FFFFFF);
+        toolbar.setPadding(dp(6), dp(5), dp(6), dp(5));
+        toolbar.setBackgroundColor(0xFAFFFFFF);
 
-        penButton = addToolButton(toolbar, "Pen", () -> selectTool(Tool.PEN));
-        eraserButton = addToolButton(toolbar, "Erase", () -> selectTool(Tool.ERASER));
-        addDivider(toolbar);
+        LinearLayout tools = toolbarRow();
+        brushButtons.add(addToolButton(tools, "Pen", () -> selectTool(Tool.PEN)));
+        brushButtons.add(addToolButton(tools, "Pencil", () -> selectTool(Tool.PENCIL)));
+        brushButtons.add(addToolButton(tools, "Marker", () -> selectTool(Tool.MARKER)));
+        eraserButton = addToolButton(tools, "Erase", () -> selectTool(Tool.ERASER));
+        addDivider(tools);
         for (int index = 0; index < WIDTHS.length; index++) {
             final float width = WIDTHS[index];
-            Button button = addWidthButton(toolbar, index + 1, () -> selectWidth(width));
+            Button button = addToolButton(tools, String.valueOf(index + 1), () -> selectWidth(width));
+            button.getLayoutParams().width = dp(46);
             widthButtons.add(button);
         }
-        addDivider(toolbar);
-        undoButton = addToolButton(toolbar, "Undo", this::undo);
-        redoButton = addToolButton(toolbar, "Redo", this::redo);
-        addToolButton(toolbar, "Clear", this::confirmClear);
 
-        FrameLayout.LayoutParams toolbarParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(72),
-                Gravity.BOTTOM
-        );
-        root.addView(toolbar, toolbarParams);
+        LinearLayout actions = toolbarRow();
+        for (int index = 0; index < COLORS.length; index++) {
+            final int color = COLORS[index];
+            Button button = addToolButton(actions, COLOR_NAMES[index], () -> selectColor(color));
+            colorButtons.add(button);
+        }
+        addDivider(actions);
+        undoButton = addToolButton(actions, "Undo", this::undo);
+        redoButton = addToolButton(actions, "Redo", this::redo);
+        layersButton = addToolButton(actions, "Layers", this::showLayersDialog);
+
+        root.addView(toolbar, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(110), Gravity.BOTTOM));
         setContentView(root);
+    }
+
+    private LinearLayout toolbarRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        toolbar.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        return row;
     }
 
     private void bindSurface() {
         surface.getHolder().addCallback(new SurfaceHolder.Callback() {
-            @Override
-            public void surfaceCreated(SurfaceHolder holder) {
+            @Override public void surfaceCreated(SurfaceHolder holder) {
                 surfaceReady = true;
                 renderDocument();
                 surface.post(MainActivity.this::initializeRawInkIfReady);
             }
 
-            @Override
-            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+            @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
                 surfaceReady = width > 0 && height > 0;
                 renderDocument();
                 surface.post(MainActivity.this::initializeRawInkIfReady);
             }
 
-            @Override
-            public void surfaceDestroyed(SurfaceHolder holder) {
+            @Override public void surfaceDestroyed(SurfaceHolder holder) {
                 surfaceReady = false;
             }
         });
@@ -172,15 +186,13 @@ public final class MainActivity extends Activity {
             List<Rect> excluded = new ArrayList<>();
             excluded.add(relativeRect(surface, topBar));
             excluded.add(relativeRect(surface, toolbar));
-            touchHelper
-                    .setStrokeWidth(nativeStrokeWidth())
-                    .setLimitRect(limit, excluded)
-                    .openRawDrawing();
+            touchHelper.setStrokeWidth(nativeStrokeWidth()).setLimitRect(limit, excluded).openRawDrawing();
             touchHelper.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN);
             touchHelper.setRawDrawingRenderEnabled(true);
-            touchHelper.setRawDrawingEnabled(resumed && tool == Tool.PEN);
+            applyNativeBrush();
             initialized = true;
-            status.setText("Autosaved locally");
+            updateRawDrawingEnabled();
+            updateStatus();
             Log.i(TAG, "BOOX raw ink ready");
         } catch (Throwable error) {
             Log.e(TAG, "BOOX raw ink unavailable", error);
@@ -190,64 +202,51 @@ public final class MainActivity extends Activity {
     }
 
     private final RawInputCallback rawInputCallback = new RawInputCallback() {
-        @Override
-        public void onBeginRawDrawing(boolean stylus, TouchPoint point) {
+        @Override public void onBeginRawDrawing(boolean stylus, TouchPoint point) {
             completedRawPoints = Collections.emptyList();
         }
 
-        @Override
-        public void onEndRawDrawing(boolean stylus, TouchPoint point) {
+        @Override public void onEndRawDrawing(boolean stylus, TouchPoint point) {
             if (completedRawPoints.isEmpty()) return;
             pushHistory();
-            document.add(new InkDocument.Stroke(strokeWidth, completedRawPoints));
+            document.addStroke(new InkDocument.Stroke(selectedBrush(), strokeWidth, strokeColor, completedRawPoints));
             completedRawPoints = Collections.emptyList();
             projectStore.save(document);
             runOnUiThread(MainActivity.this::updateControls);
         }
 
-        @Override
-        public void onRawDrawingTouchPointMoveReceived(TouchPoint point) {
-            // Never allocate or redraw on the latency-critical live path.
+        @Override public void onRawDrawingTouchPointMoveReceived(TouchPoint point) {
+            // Latency contract: no allocation, persistence, repaint, or UI work here.
         }
 
-        @Override
-        public void onRawDrawingTouchPointListReceived(TouchPointList points) {
+        @Override public void onRawDrawingTouchPointListReceived(TouchPointList points) {
             completedRawPoints = normalize(points.getPoints());
         }
 
-        @Override
-        public void onBeginRawErasing(boolean stylus, TouchPoint point) {}
+        @Override public void onBeginRawErasing(boolean stylus, TouchPoint point) {}
 
-        @Override
-        public void onEndRawErasing(boolean stylus, TouchPoint point) {
+        @Override public void onEndRawErasing(boolean stylus, TouchPoint point) {
             renderDocument();
+            runOnUiThread(MainActivity.this::updateControls);
         }
 
-        @Override
-        public void onRawErasingTouchPointMoveReceived(TouchPoint point) {}
+        @Override public void onRawErasingTouchPointMoveReceived(TouchPoint point) {
+            // Onyx owns the live eraser preview; document work waits for the completed list.
+        }
 
-        @Override
-        public void onRawErasingTouchPointListReceived(TouchPointList points) {
+        @Override public void onRawErasingTouchPointListReceived(TouchPointList points) {
             List<InkDocument.Point> erasePoints = normalize(points.getPoints());
             if (erasePoints.isEmpty()) return;
             pushHistory();
             boolean changed = false;
-            for (InkDocument.Point point : erasePoints) {
-                changed |= document.eraseAt(
-                        point.x,
-                        point.y,
-                        dp(ERASER_RADIUS_DP),
-                        surface.getWidth(),
-                        surface.getHeight()
-                );
-            }
+            for (InkDocument.Point point : erasePoints) changed |= eraseAt(point.x, point.y);
             if (changed) projectStore.save(document);
             else undo.pollLast();
         }
     };
 
     private boolean handleSurfaceTouch(View view, MotionEvent event) {
-        if (tool != Tool.ERASER || !surfaceReady) return true;
+        if (tool != Tool.ERASER || !surfaceReady || !document.selectedLayer().visible) return true;
         float x = event.getX() / Math.max(1f, surface.getWidth());
         float y = event.getY() / Math.max(1f, surface.getHeight());
         switch (event.getActionMasked()) {
@@ -263,9 +262,7 @@ public final class MainActivity extends Activity {
                 if (eraserGestureChanged) {
                     renderDocument();
                     projectStore.save(document);
-                } else {
-                    undo.pollLast();
-                }
+                } else undo.pollLast();
                 updateControls();
                 return true;
             default:
@@ -284,12 +281,7 @@ public final class MainActivity extends Activity {
         long now = SystemClock.uptimeMillis();
         List<InkDocument.Point> points = new ArrayList<>(rawPoints.size());
         for (TouchPoint point : rawPoints) {
-            points.add(new InkDocument.Point(
-                    point.getX() / width,
-                    point.getY() / height,
-                    pressureOf(point),
-                    now
-            ));
+            points.add(new InkDocument.Point(point.getX() / width, point.getY() / height, pressureOf(point), now));
         }
         return points;
     }
@@ -303,11 +295,10 @@ public final class MainActivity extends Activity {
             canvas.drawColor(Color.WHITE);
             drawDots(canvas);
             Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            paint.setColor(Color.BLACK);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            for (InkDocument.Stroke stroke : document.strokes()) drawStroke(canvas, paint, stroke);
+            for (InkDocument.Layer layer : document.layers()) {
+                if (!layer.visible) continue;
+                for (InkDocument.Stroke stroke : layer.strokes) drawStroke(canvas, paint, stroke);
+            }
         } catch (Throwable error) {
             Log.e(TAG, "Unable to render canvas", error);
         } finally {
@@ -317,148 +308,290 @@ public final class MainActivity extends Activity {
 
     private void drawDots(Canvas canvas) {
         Paint dots = new Paint(Paint.ANTI_ALIAS_FLAG);
-        dots.setColor(0xFFD5D5D5);
+        dots.setColor(0xFFD8D8D8);
         dots.setStyle(Paint.Style.FILL);
         float spacing = dp(28);
         float radius = Math.max(1f, getResources().getDisplayMetrics().density);
         for (float y = spacing; y < canvas.getHeight(); y += spacing) {
-            for (float x = spacing; x < canvas.getWidth(); x += spacing) {
-                canvas.drawCircle(x, y, radius, dots);
-            }
+            for (float x = spacing; x < canvas.getWidth(); x += spacing) canvas.drawCircle(x, y, radius, dots);
         }
     }
 
     private void drawStroke(Canvas canvas, Paint paint, InkDocument.Stroke stroke) {
         if (stroke.points.isEmpty()) return;
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeJoin(Paint.Join.ROUND);
+        paint.setStrokeCap(stroke.brush == InkDocument.Brush.MARKER ? Paint.Cap.SQUARE : Paint.Cap.ROUND);
         InkDocument.Point first = stroke.points.get(0);
         if (stroke.points.size() == 1) {
+            float pressure = adjustedPressure(first.pressure, stroke.brush);
+            paint.setColor(renderColor(stroke.color, stroke.brush, pressure));
             paint.setStyle(Paint.Style.FILL);
-            canvas.drawCircle(first.x * canvas.getWidth(), first.y * canvas.getHeight(), dp(stroke.width) / 2f, paint);
-            paint.setStyle(Paint.Style.STROKE);
+            canvas.drawCircle(first.x * canvas.getWidth(), first.y * canvas.getHeight(),
+                    dp(stroke.width) * widthFactor(stroke.brush, pressure) / 2f, paint);
             return;
         }
         InkDocument.Point previous = first;
         for (int index = 1; index < stroke.points.size(); index++) {
             InkDocument.Point point = stroke.points.get(index);
-            float pressure = (previous.pressure + point.pressure) / 2f;
-            paint.setStrokeWidth(dp(stroke.width) * (0.55f + pressure * 0.7f));
-            canvas.drawLine(
-                    previous.x * canvas.getWidth(),
-                    previous.y * canvas.getHeight(),
-                    point.x * canvas.getWidth(),
-                    point.y * canvas.getHeight(),
-                    paint
-            );
+            float pressure = adjustedPressure((previous.pressure + point.pressure) / 2f, stroke.brush);
+            paint.setColor(renderColor(stroke.color, stroke.brush, pressure));
+            paint.setStrokeWidth(dp(stroke.width) * widthFactor(stroke.brush, pressure));
+            canvas.drawLine(previous.x * canvas.getWidth(), previous.y * canvas.getHeight(),
+                    point.x * canvas.getWidth(), point.y * canvas.getHeight(), paint);
             previous = point;
         }
     }
 
+    private float adjustedPressure(float pressure, InkDocument.Brush brush) {
+        float normalized = pressure <= 0f ? 0.5f : pressure;
+        if (brush == InkDocument.Brush.PENCIL) return 0.2f + normalized * 0.8f;
+        if (brush == InkDocument.Brush.MARKER) return 0.55f + normalized * 0.45f;
+        return normalized;
+    }
+
+    private float widthFactor(InkDocument.Brush brush, float pressure) {
+        if (brush == InkDocument.Brush.PENCIL) return 0.45f + pressure * 0.65f;
+        if (brush == InkDocument.Brush.MARKER) return 1.6f + pressure * 0.45f;
+        return 0.5f + pressure * 0.8f;
+    }
+
+    private int renderColor(int color, InkDocument.Brush brush, float pressure) {
+        float strength;
+        if (brush == InkDocument.Brush.PENCIL) strength = 0.38f + pressure * 0.48f;
+        else if (brush == InkDocument.Brush.MARKER) strength = 0.58f + pressure * 0.3f;
+        else strength = 0.82f + pressure * 0.18f;
+        int red = Color.red(color);
+        int green = Color.green(color);
+        int blue = Color.blue(color);
+        return Color.rgb(
+                Math.round(255 - (255 - red) * strength),
+                Math.round(255 - (255 - green) * strength),
+                Math.round(255 - (255 - blue) * strength));
+    }
+
     private void selectTool(Tool selected) {
         tool = selected;
-        if (touchHelper != null) touchHelper.setRawDrawingEnabled(resumed && tool == Tool.PEN);
+        applyNativeBrush();
+        updateRawDrawingEnabled();
         updateControls();
     }
 
     private void selectWidth(float width) {
         strokeWidth = width;
-        tool = Tool.PEN;
-        if (touchHelper != null) {
-            touchHelper.setStrokeWidth(nativeStrokeWidth());
-            touchHelper.setRawDrawingEnabled(resumed);
-        }
+        if (tool == Tool.ERASER) tool = Tool.PEN;
+        applyNativeBrush();
+        updateRawDrawingEnabled();
+        updateControls();
+    }
+
+    private void selectColor(int color) {
+        strokeColor = color;
+        if (tool == Tool.ERASER) tool = Tool.PEN;
+        applyNativeBrush();
+        updateRawDrawingEnabled();
         updateControls();
     }
 
     private void undo() {
-        List<InkDocument.Stroke> previous = undo.pollLast();
+        InkDocument previous = undo.pollLast();
         if (previous == null) return;
-        redo.addLast(document.snapshot());
+        redo.addLast(document.copy());
         document.replaceWith(previous);
-        renderDocument();
-        projectStore.save(document);
-        updateControls();
+        afterDocumentChange();
     }
 
     private void redo() {
-        List<InkDocument.Stroke> next = redo.pollLast();
+        InkDocument next = redo.pollLast();
         if (next == null) return;
-        undo.addLast(document.snapshot());
+        undo.addLast(document.copy());
         document.replaceWith(next);
-        renderDocument();
-        projectStore.save(document);
-        updateControls();
-    }
-
-    private void confirmClear() {
-        if (document.isEmpty()) return;
-        new AlertDialog.Builder(this)
-                .setTitle("Clear canvas?")
-                .setMessage("The current drawing will be cleared. You can undo immediately afterward.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Clear", (dialog, which) -> {
-                    pushHistory();
-                    document.clear();
-                    renderDocument();
-                    projectStore.save(document);
-                    updateControls();
-                })
-                .show();
+        afterDocumentChange();
     }
 
     private void pushHistory() {
-        undo.addLast(document.snapshot());
+        undo.addLast(document.copy());
         while (undo.size() > MAX_HISTORY) undo.pollFirst();
         redo.clear();
     }
 
-    private void updateControls() {
-        styleSelected(penButton, tool == Tool.PEN);
-        styleSelected(eraserButton, tool == Tool.ERASER);
-        for (int index = 0; index < widthButtons.size(); index++) {
-            styleSelected(widthButtons.get(index), strokeWidth == WIDTHS[index]);
+    private void performLayerOperation(Runnable operation) {
+        pushHistory();
+        InkDocument before = undo.peekLast();
+        operation.run();
+        if (documentsEquivalent(before, document)) undo.pollLast();
+        else afterDocumentChange();
+    }
+
+    private boolean documentsEquivalent(InkDocument first, InkDocument second) {
+        try {
+            return first.toJson().toString().equals(second.toJson().toString());
+        } catch (Exception ignored) {
+            return false;
         }
+    }
+
+    private void afterDocumentChange() {
+        renderDocument();
+        projectStore.save(document);
+        updateRawDrawingEnabled();
+        updateControls();
+    }
+
+    private void showLayersDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(12), dp(8), dp(12), dp(4));
+        InkDocument.Layer selected = document.selectedLayer();
+        for (int index = document.layers().size() - 1; index >= 0; index--) {
+            InkDocument.Layer layer = document.layers().get(index);
+            String prefix = layer.id.equals(selected.id) ? "▶ " : "   ";
+            String eye = layer.visible ? "● " : "○ ";
+            Button row = addToolButton(content, prefix + eye + layer.name + "  ·  " + layer.strokes.size(), () -> {
+                document.selectLayer(layer.id);
+                projectStore.save(document);
+                updateRawDrawingEnabled();
+                updateControls();
+            });
+            row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            styleSelected(row, layer.id.equals(selected.id));
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Layers · top first")
+                .setView(scroll)
+                .setPositiveButton("Done", null)
+                .setNeutralButton("Add", null)
+                .setNegativeButton("Edit", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+                performLayerOperation(document::addLayer);
+                dialog.dismiss();
+                showLayersDialog();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
+                dialog.dismiss();
+                showLayerActions();
+            });
+        });
+        dialog.show();
+    }
+
+    private void showLayerActions() {
+        InkDocument.Layer layer = document.selectedLayer();
+        String visibility = layer.visible ? "Hide" : "Show";
+        String[] actions = {"Rename", "Move up", "Move down", visibility, "Clear", "Delete"};
+        new AlertDialog.Builder(this)
+                .setTitle(layer.name)
+                .setItems(actions, (dialog, which) -> {
+                    if (which == 0) showRenameDialog();
+                    else if (which == 1) performLayerOperation(() -> document.moveSelectedLayer(1));
+                    else if (which == 2) performLayerOperation(() -> document.moveSelectedLayer(-1));
+                    else if (which == 3) performLayerOperation(document::toggleSelectedLayerVisibility);
+                    else if (which == 4) confirmLayerClear();
+                    else confirmLayerDelete();
+                })
+                .setNegativeButton("Back", (dialog, which) -> showLayersDialog())
+                .show();
+    }
+
+    private void showRenameDialog() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(document.selectedLayer().name);
+        input.selectAll();
+        new AlertDialog.Builder(this)
+                .setTitle("Rename layer")
+                .setView(input)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Rename", (dialog, which) ->
+                        performLayerOperation(() -> document.renameSelectedLayer(input.getText().toString())))
+                .show();
+    }
+
+    private void confirmLayerClear() {
+        if (document.selectedLayerIsEmpty()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Clear " + document.selectedLayer().name + "?")
+                .setMessage("Only this layer will be cleared. You can undo afterward.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear", (dialog, which) -> performLayerOperation(document::clearSelectedLayer))
+                .show();
+    }
+
+    private void confirmLayerDelete() {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete " + document.selectedLayer().name + "?")
+                .setMessage(document.layers().size() == 1
+                        ? "The only layer will be cleared. You can undo afterward."
+                        : "The layer and its marks will be removed. You can undo afterward.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> performLayerOperation(document::deleteSelectedLayer))
+                .show();
+    }
+
+    private void updateControls() {
+        Tool[] tools = {Tool.PEN, Tool.PENCIL, Tool.MARKER};
+        for (int index = 0; index < brushButtons.size(); index++) styleSelected(brushButtons.get(index), tool == tools[index]);
+        styleSelected(eraserButton, tool == Tool.ERASER);
+        for (int index = 0; index < widthButtons.size(); index++) styleSelected(widthButtons.get(index), strokeWidth == WIDTHS[index]);
+        for (int index = 0; index < colorButtons.size(); index++) styleColor(colorButtons.get(index), COLORS[index], strokeColor == COLORS[index]);
         undoButton.setEnabled(!undo.isEmpty());
         redoButton.setEnabled(!redo.isEmpty());
+        styleSelected(undoButton, false);
+        styleSelected(redoButton, false);
+        styleSelected(layersButton, false);
+        updateStatus();
+    }
+
+    private void updateStatus() {
+        if (status == null || document == null) return;
+        InkDocument.Layer layer = document.selectedLayer();
+        status.setText(layer.name + (layer.visible ? " · saved locally" : " · hidden"));
     }
 
     private Button addToolButton(LinearLayout parent, String label, Runnable action) {
         Button button = new Button(this);
         button.setText(label);
-        button.setTextSize(13);
+        button.setTextSize(12);
         button.setAllCaps(false);
         button.setMinWidth(0);
         button.setMinimumWidth(0);
-        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setPadding(dp(10), 0, dp(10), 0);
         button.setOnClickListener(view -> action.run());
-        parent.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
-        return button;
-    }
-
-    private Button addWidthButton(LinearLayout parent, int label, Runnable action) {
-        Button button = addToolButton(parent, String.valueOf(label), action);
-        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) button.getLayoutParams();
-        params.width = dp(48);
-        button.setLayoutParams(params);
+        parent.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)));
         return button;
     }
 
     private void addDivider(LinearLayout parent) {
         View divider = new View(this);
-        divider.setBackgroundColor(0xFFCCCCCC);
+        divider.setBackgroundColor(0xFFBBBBBB);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(1), dp(30));
-        params.setMargins(dp(7), 0, dp(7), 0);
+        params.setMargins(dp(6), 0, dp(6), 0);
         parent.addView(divider, params);
     }
 
     private void styleSelected(Button button, boolean selected) {
         if (button == null) return;
         GradientDrawable background = new GradientDrawable();
-        background.setCornerRadius(dp(10));
-        background.setColor(selected ? Color.BLACK : 0xFFF0F0F0);
-        background.setStroke(dp(1), selected ? Color.BLACK : 0xFFD0D0D0);
+        background.setCornerRadius(dp(7));
+        background.setColor(selected ? Color.BLACK : 0xFFF3F3F3);
+        background.setStroke(dp(1), selected ? Color.BLACK : 0xFFCCCCCC);
         button.setTextColor(selected ? Color.WHITE : Color.BLACK);
         button.setBackground(background);
-        button.setAlpha(button.isEnabled() ? 1f : 0.4f);
+        button.setAlpha(button.isEnabled() ? 1f : 0.35f);
+    }
+
+    private void styleColor(Button button, int color, boolean selected) {
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(7));
+        background.setColor(color);
+        background.setStroke(dp(selected ? 3 : 1), selected ? Color.BLACK : 0xFF777777);
+        button.setTextColor(Color.luminance(color) < 0.5f ? Color.WHITE : Color.BLACK);
+        button.setBackground(background);
     }
 
     private Rect relativeRect(View parent, View child) {
@@ -472,40 +605,66 @@ public final class MainActivity extends Activity {
         return rect;
     }
 
+    private InkDocument.Brush selectedBrush() {
+        if (tool == Tool.PENCIL) return InkDocument.Brush.PENCIL;
+        if (tool == Tool.MARKER) return InkDocument.Brush.MARKER;
+        return InkDocument.Brush.PEN;
+    }
+
     private float nativeStrokeWidth() {
-        return dp(strokeWidth);
+        float factor = tool == Tool.PENCIL ? 0.8f : tool == Tool.MARKER ? 1.8f : 1f;
+        return dp(strokeWidth) * factor;
+    }
+
+    private void applyNativeBrush() {
+        if (touchHelper == null) return;
+        touchHelper.setStrokeWidth(nativeStrokeWidth());
+        try {
+            Method method = touchHelper.getClass().getMethod("setStrokeColor", int.class);
+            method.invoke(touchHelper, strokeColor);
+        } catch (ReflectiveOperationException ignored) {
+            // Some BOOX SDK/firmware combinations render live raw ink in black only.
+        }
+    }
+
+    private void updateRawDrawingEnabled() {
+        if (touchHelper != null) {
+            boolean drawingTool = tool != Tool.ERASER;
+            touchHelper.setRawDrawingEnabled(resumed && drawingTool && document.selectedLayer().visible);
+        }
     }
 
     private float pressureOf(TouchPoint point) {
         try {
             Method method = point.getClass().getMethod("getPressure");
             Object value = method.invoke(point);
-            if (value instanceof Number) return Math.max(0f, Math.min(1f, ((Number) value).floatValue()));
+            if (value instanceof Number) {
+                float pressure = ((Number) value).floatValue();
+                if (pressure > 1f) pressure /= 4096f;
+                return Math.max(0f, Math.min(1f, pressure));
+            }
         } catch (ReflectiveOperationException ignored) {
             // Older firmware does not expose pressure through the same accessor.
         }
         return 0.5f;
     }
 
-    @Override
-    protected void onResume() {
+    @Override protected void onResume() {
         super.onResume();
         resumed = true;
         enterImmersiveMode();
-        if (touchHelper != null) touchHelper.setRawDrawingEnabled(tool == Tool.PEN);
+        if (touchHelper != null) updateRawDrawingEnabled();
         else if (surface != null) surface.post(this::initializeRawInkIfReady);
     }
 
-    @Override
-    protected void onPause() {
+    @Override protected void onPause() {
         resumed = false;
         if (touchHelper != null) touchHelper.setRawDrawingEnabled(false);
         projectStore.save(document);
         super.onPause();
     }
 
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         closeRawInk();
         projectStore.close();
         super.onDestroy();
@@ -526,13 +685,9 @@ public final class MainActivity extends Activity {
 
     private void enterImmersiveMode() {
         getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        );
+                View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
     private int dp(float value) {
