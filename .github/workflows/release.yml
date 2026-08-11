@@ -2,7 +2,9 @@ name: Release
 
 on:
   push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
 
 permissions:
   contents: write
@@ -20,6 +22,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Prepare release manifest
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const path = "manifest.json";
+            const manifest = JSON.parse(readFileSync(path, "utf8"));
+            manifest.version = process.argv[1];
+            writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+          ' "$tag"
       - uses: actions/attest@v4
         with:
           subject-path: |
@@ -31,4 +43,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          gh release create "$tag" --title "$tag" --generate-notes main.js manifest.json styles.css
+          flags=()
+          if [[ "$tag" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$tag" "${flags[@]}" --title "$tag" --generate-notes main.js manifest.json styles.css

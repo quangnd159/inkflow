@@ -74,6 +74,17 @@ Download `main.js`, `manifest.json`, and `styles.css` from a release and place t
 
 Then reload Obsidian and enable Inkflow.
 
+### BRAT beta channel
+
+BRAT can install prerelease Inkflow builds without changing the version published in Obsidian's community directory:
+
+1. Install and enable **BRAT** from Community plugins.
+2. Run **BRAT: Add a beta plugin for testing** from the command palette.
+3. Enter `quangnd159/inkflow` as the repository.
+4. Enable Inkflow again if Obsidian prompts you.
+
+BRAT downloads the beta `main.js`, `manifest.json`, and `styles.css` from GitHub Releases and can update them independently of the community-store channel. Run **BRAT: Check for updates to all beta plugins and update** whenever a newer test build is announced.
+
 ## Development
 
 Requires Node.js 20.19 or newer.
