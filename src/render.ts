@@ -1,4 +1,4 @@
-import { clamp, distanceToSegmentSquaredXY } from "./geometry";
+import { clamp } from "./geometry";
 import type { InkDocument, InkPoint, InkStroke, PageStyle } from "./model";
 
 const PRESSURE_SMOOTHING_WINDOW = 3;
@@ -216,65 +216,6 @@ export function smoothedPressure(points: readonly InkPoint[], index: number, win
     count += 1;
   }
   return count > 0 ? sum / count : 0.5;
-}
-
-export interface DirtyRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/**
- * Integer-clamped bounding box (plus 1px pad) of a capsule shape around the
- * segment (x0, y0)-(x1, y1) with the given radius, clamped to [0, maxWidth] x
- * [0, maxHeight]. Used to size the `getImageData`/`putImageData` region for
- * turbo (e-ink) hard-ink rasterization.
- */
-export function segmentDirtyRect(x0: number, y0: number, x1: number, y1: number, radius: number, maxWidth: number, maxHeight: number): DirtyRect {
-  const pad = 1;
-  const minX = clamp(Math.floor(Math.min(x0, x1) - radius - pad), 0, maxWidth);
-  const minY = clamp(Math.floor(Math.min(y0, y1) - radius - pad), 0, maxHeight);
-  const maxX = clamp(Math.ceil(Math.max(x0, x1) + radius + pad), 0, maxWidth);
-  const maxY = clamp(Math.ceil(Math.max(y0, y1) + radius + pad), 0, maxHeight);
-  return { x: minX, y: minY, width: Math.max(0, maxX - minX), height: Math.max(0, maxY - minY) };
-}
-
-/**
- * Stamps a hard-edged (no antialiasing) capsule around the segment (x0, y0)-(x1, y1)
- * into `image`, in the ImageData's own local pixel space (i.e. x0/y0/x1/y1 are already
- * relative to the ImageData's top-left corner). Every pixel whose center lies within
- * `radius` of the segment becomes fully opaque `rgb`; every other pixel is left
- * untouched. There is no partial coverage: e-ink panels flip pure black/white pixels
- * far faster than antialiased gray ones.
- */
-export function rasterizeSegmentHard(image: ImageData, x0: number, y0: number, x1: number, y1: number, radius: number, rgb: readonly [number, number, number]): void {
-  const { width, height, data } = image;
-  const radiusSquared = radius * radius;
-  const [r, g, b] = rgb;
-  for (let py = 0; py < height; py += 1) {
-    const cy = py + 0.5;
-    for (let px = 0; px < width; px += 1) {
-      const cx = px + 0.5;
-      if (distanceToSegmentSquaredXY(cx, cy, x0, y0, x1, y1) > radiusSquared) continue;
-      const index = (py * width + px) * 4;
-      data[index] = r;
-      data[index + 1] = g;
-      data[index + 2] = b;
-      data[index + 3] = 255;
-    }
-  }
-}
-
-/** Parses a `#rgb` or `#rrggbb` CSS hex color into 0-255 RGB components; anything else falls back to black. */
-export function parseColorToRgb(color: string): [number, number, number] {
-  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
-  if (match === null) return [0, 0, 0];
-  const hex = match[1]!;
-  if (hex.length === 3) {
-    return [parseInt(hex[0]! + hex[0], 16), parseInt(hex[1]! + hex[1], 16), parseInt(hex[2]! + hex[2], 16)];
-  }
-  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
 }
 
 export function pointFromPointer(event: PointerEvent, canvas: HTMLCanvasElement, scale: number, offsetX: number, offsetY: number): InkPoint {

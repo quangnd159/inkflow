@@ -4,7 +4,7 @@ All notable changes to Inkflow are documented here.
 
 ## Next
 
-- Faster pen response on e-ink screens: strokes now draw as instant hard-edged ink and smooth out shortly after you pause writing. Where the browser supports it, the system also draws an ink trail ahead of the stroke.
+- Faster canvas compositing on all devices; system-drawn ink trail where supported.
 - Removed the BOOX companion app in favor of an improved in-app canvas.
 - Work around iPadOS Scribble intercepting touchmove events during handwriting.
 - Render the predicted stroke tail immediately for lower perceived latency.

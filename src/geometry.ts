@@ -42,20 +42,3 @@ export function pointToSegmentDistanceSquared(point: InkPoint, start: InkPoint, 
 export function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
-
-/** Squared distance from point (px, py) to the segment (x0, y0)-(x1, y1). Works for zero-length segments (a dot). */
-export function distanceToSegmentSquaredXY(px: number, py: number, x0: number, y0: number, x1: number, y1: number): number {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  if (dx === 0 && dy === 0) {
-    const ddx = px - x0;
-    const ddy = py - y0;
-    return ddx * ddx + ddy * ddy;
-  }
-  const t = clamp(((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy), 0, 1);
-  const x = x0 + t * dx;
-  const y = y0 + t * dy;
-  const ddx = px - x;
-  const ddy = py - y;
-  return ddx * ddx + ddy * ddy;
-}

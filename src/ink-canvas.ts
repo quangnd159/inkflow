@@ -1,14 +1,5 @@
 import { clamp, shouldAddPoint, strokeHitsPoint } from "./geometry";
-import {
-  parseColorToRgb,
-  rasterizeSegmentHard,
-  renderDocument,
-  renderPredictedTail,
-  renderStroke,
-  segmentDirtyRect,
-  pointFromPointer,
-  type DirtyRect,
-} from "./render";
+import { renderDocument, renderPredictedTail, renderStroke, renderStrokeIncrement, pointFromPointer } from "./render";
 import type { InkDocument, InkPoint, InkStroke, Tool } from "./model";
 
 const MAX_DEVICE_PIXEL_RATIO = 2;
@@ -17,8 +8,6 @@ const MAX_EINK_DISPLAY_PIXELS = 2_000_000;
 const MAX_HISTORY = 60;
 const ERASER_RADIUS = 24;
 const EXPORT_SCALE = 1;
-/** How long to wait, after the last stroke started, before replacing turbo hard ink with the smooth version. */
-const SETTLE_DELAY_MS = 1500;
 
 export interface InkCanvasOptions {
   getEInkMode: () => boolean;
@@ -41,10 +30,9 @@ interface NavigatorWithInk extends Navigator {
 }
 
 export class InkCanvas {
-  canvas: HTMLCanvasElement;
-  private readonly parent: HTMLElement;
+  readonly canvas: HTMLCanvasElement;
   private readonly cacheCanvas: HTMLCanvasElement;
-  private context: CanvasRenderingContext2D;
+  private readonly context: CanvasRenderingContext2D;
   private readonly cacheContext: CanvasRenderingContext2D;
   private readonly resizeObserver: ResizeObserver;
   private document: InkDocument | null = null;
@@ -66,48 +54,25 @@ export class InkCanvas {
   private viewportHeight = 1;
   private deviceScale = 1;
   private readonly useRawPointerEvents: boolean;
-  /** Whether the visible context was created with `willReadFrequently` (i.e. e-ink mode at last (re)construction). */
-  private contextHasFastRead = false;
-  /** Accumulated device-pixel bbox of the live turbo (hard-ink) strokes drawn for the current stroke. */
-  private turboBounds: DirtyRect | null = null;
-  /** Device-pixel regions still showing turbo hard ink, waiting to be replaced by the smooth cache render. */
-  private pendingSettleBounds: DirtyRect[] = [];
-  private settleTimer: number | null = null;
   private inkPresenter: InkPresenter | null = null;
   private inkPresenterDisabled = false;
   private inkPresenterRequestInFlight = false;
 
   constructor(parent: HTMLElement, private readonly options: InkCanvasOptions) {
-    this.parent = parent;
+    this.canvas = parent.createEl("canvas", { cls: "inkflow-canvas", attr: { tabindex: "0", "aria-label": "Handwriting canvas" } });
     this.cacheCanvas = createDetachedCanvas(parent);
+    // alpha: false is safe because the document background always fully covers the
+    // canvas (renderDocument uses a "cover" transform), and it lets the browser skip
+    // compositing against the page behind it.
+    const context = this.canvas.getContext("2d", { desynchronized: true, alpha: false });
     const cacheContext = this.cacheCanvas.getContext("2d");
-    if (cacheContext === null) throw new Error("Canvas 2D is unavailable");
+    if (context === null || cacheContext === null) throw new Error("Canvas 2D is unavailable");
+    this.context = context;
     this.cacheContext = cacheContext;
-    const created = this.createCanvasElement();
-    this.canvas = created.canvas;
-    this.context = created.context;
     this.resizeObserver = new ResizeObserver(() => this.scheduleResize());
     this.resizeObserver.observe(parent);
     this.useRawPointerEvents = "onpointerrawupdate" in this.canvas;
     this.bindEvents();
-  }
-
-  /**
-   * Creates the visible canvas element and its 2D context. Context creation attributes
-   * (`willReadFrequently`) are immutable once set, and turbo (e-ink) mode needs fast
-   * `getImageData`/`putImageData` while non-e-ink mode does not, so the element is
-   * recreated (see `reinitCanvasIfNeeded`) whenever e-ink mode toggles at runtime.
-   */
-  private createCanvasElement(): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } {
-    const eInk = this.isEInk();
-    const canvas = this.parent.createEl("canvas", { cls: "inkflow-canvas", attr: { tabindex: "0", "aria-label": "Handwriting canvas" } });
-    // alpha: false is safe because the document background always fully covers the
-    // canvas (renderDocument uses a "cover" transform), and it lets the browser skip
-    // compositing against the page behind it.
-    const context = canvas.getContext("2d", { desynchronized: true, alpha: false, willReadFrequently: eInk });
-    if (context === null) throw new Error("Canvas 2D is unavailable");
-    this.contextHasFastRead = eInk;
-    return { canvas, context };
   }
 
   setDocument(document: InkDocument): void {
@@ -117,9 +82,6 @@ export class InkCanvas {
     this.undoStack = [];
     this.redoStack = [];
     this.zoom = 1;
-    // A full redraw is about to happen (invalidateCache below), so any turbo hard ink
-    // still pending settlement is about to be overwritten anyway.
-    this.clearPendingSettle();
     this.invalidateCache();
   }
 
@@ -138,7 +100,6 @@ export class InkCanvas {
   }
 
   refreshPerformance(): void {
-    this.reinitCanvasIfNeeded();
     this.scheduleResize();
   }
 
@@ -175,10 +136,6 @@ export class InkCanvas {
 
   exportPng(): Promise<ArrayBuffer> {
     if (this.document === null) return Promise.reject(new Error("No ink document is open"));
-    // Export always renders straight from the saved document (never from the visible or
-    // cache canvas), so it is unaffected by turbo hard ink either way; clear the pending
-    // settle list simply to avoid a stray settle firing mid-export.
-    this.clearPendingSettle();
     const canvas = createDetachedCanvas(this.canvas);
     canvas.width = Math.round(this.document.width * EXPORT_SCALE);
     canvas.height = Math.round(this.document.height * EXPORT_SCALE);
@@ -202,8 +159,7 @@ export class InkCanvas {
   destroy(): void {
     this.resizeObserver.disconnect();
     if (this.resizeFrame !== null) this.getWindow().cancelAnimationFrame(this.resizeFrame);
-    if (this.settleTimer !== null) this.getWindow().clearTimeout(this.settleTimer);
-    this.unbindEvents(this.canvas);
+    this.canvas.removeEventListener("touchmove", this.onTouchMove);
   }
 
   private bindEvents(): void {
@@ -216,46 +172,9 @@ export class InkCanvas {
     // actively prevents the default touchmove behavior; touch-action: none (styles.css)
     // alone is not enough to stop it from swallowing strokes.
     this.canvas.addEventListener("touchmove", this.onTouchMove, { passive: false });
-    this.canvas.addEventListener("contextmenu", this.onContextMenu);
+    this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.canvas.addEventListener("keydown", this.onKeyDown);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
-  }
-
-  private unbindEvents(canvas: HTMLCanvasElement): void {
-    canvas.removeEventListener("pointerdown", this.onPointerDown);
-    canvas.removeEventListener("pointerrawupdate", this.onPointerRawUpdate);
-    canvas.removeEventListener("pointermove", this.onPointerMove);
-    canvas.removeEventListener("pointerup", this.onPointerUp);
-    canvas.removeEventListener("pointercancel", this.onPointerUp);
-    canvas.removeEventListener("touchmove", this.onTouchMove);
-    canvas.removeEventListener("contextmenu", this.onContextMenu);
-    canvas.removeEventListener("keydown", this.onKeyDown);
-    canvas.removeEventListener("wheel", this.onWheel);
-  }
-
-  private readonly onContextMenu = (event: Event): void => {
-    event.preventDefault();
-  };
-
-  /**
-   * Recreates the visible canvas element when e-ink mode has changed since the context
-   * was last created, so `willReadFrequently` (needed for fast turbo getImageData/
-   * putImageData) stays in sync. Reuses the same append/bind/resize machinery as
-   * construction; the old element is simply dropped.
-   */
-  private reinitCanvasIfNeeded(): void {
-    if (this.isEInk() === this.contextHasFastRead) return;
-    const activeTool = this.tool;
-    const oldCanvas = this.canvas;
-    this.unbindEvents(oldCanvas);
-    oldCanvas.remove();
-    const created = this.createCanvasElement();
-    this.canvas = created.canvas;
-    this.context = created.context;
-    this.canvas.dataset.tool = activeTool;
-    this.bindEvents();
-    this.clearPendingSettle();
-    this.invalidateCache();
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -271,22 +190,14 @@ export class InkCanvas {
     if (this.tool === "pen") {
       this.currentStroke = { id: createStrokeId(), color: "auto", width: this.width, points: [point] };
       this.predictedPoints = [];
-      this.turboBounds = null;
-      if (this.isEInk()) {
-        this.drawTurboIncrement(this.currentStroke, 0);
-        this.scheduleSettleTimer();
-      } else {
-        this.requestFrame();
-      }
+      if (this.isEInk()) this.drawStrokeIncrement(this.currentStroke, 0, false);
+      else this.requestFrame();
       if (event.pointerType === "pen") {
         void this.ensureInkPresenter();
         this.updateInkTrail(event);
       }
     } else {
       this.eraserChanged = false;
-      // The eraser's own full redraw (on pointerup, via changed()) will overwrite any
-      // turbo hard ink anyway; clear eagerly so a mid-drag settle timer never fires.
-      this.clearPendingSettle();
       this.erase(point);
     }
     event.preventDefault();
@@ -308,7 +219,7 @@ export class InkCanvas {
     }
     if (this.currentStroke !== null && this.currentStroke.points.length > firstNewPointIndex) {
       if (this.isEInk()) {
-        this.drawTurboIncrement(this.currentStroke, firstNewPointIndex);
+        this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex, false);
       } else {
         this.predictedPoints = this.getPredictedPoints(event);
         this.requestFrame();
@@ -337,26 +248,18 @@ export class InkCanvas {
       if (this.isOnPage(finalPoint) && shouldAddPoint(this.currentStroke.points, finalPoint)) {
         this.currentStroke.points.push(finalPoint);
       }
-      // Draw the closing segment(s) in one final call, whether or not a new point was
-      // pushed above, so the on-screen turbo ink reaches the exact pen-lift point.
-      if (eInk) this.drawTurboIncrement(this.currentStroke, firstNewPointIndex);
+      // Draw the closing curve segment(s) plus the tail in one final call, whether or
+      // not a new point was pushed above, so the on-screen result reaches the exact
+      // pen-lift point and matches the full-redraw geometry (see drawStrokeIncrement).
+      if (eInk) this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex, true);
       this.predictedPoints = [];
       const committed = this.currentStroke;
       this.document.strokes = [...this.document.strokes, committed];
       this.currentStroke = null;
-      // Commit the smooth, antialiased render to the cache exactly as today. The
-      // visible canvas keeps showing the hard turbo ink until the settle pass later
-      // replaces just this stroke's region with the cache's smooth version.
       this.commitStrokeToCache(committed);
-      if (eInk) {
-        if (this.turboBounds !== null) this.pendingSettleBounds.push(this.turboBounds);
-        this.turboBounds = null;
-        this.scheduleSettleTimer();
-      } else {
-        // Non-e-ink strokes are drawn per-frame (cache blit + full redraw); request one
-        // final frame so the settled stroke replaces any lingering predicted tail.
-        this.requestFrame();
-      }
+      // Non-e-ink strokes are drawn per-frame (cache blit + full redraw); request one
+      // final frame so the settled stroke replaces any lingering predicted tail.
+      if (!eInk) this.requestFrame();
       this.options.onChange();
     } else if (this.tool === "eraser") {
       if (this.eraserChanged) this.changed();
@@ -403,17 +306,11 @@ export class InkCanvas {
   }
 
   private changed(): void {
-    // undo/redo and eraser commits all trigger a full redraw below, which will
-    // overwrite any turbo hard ink still on screen; no need to blit it first.
-    this.clearPendingSettle();
     this.invalidateCache();
     this.options.onChange();
   }
 
   private resize(): void {
-    // A resize forces a full redraw at the new dimensions, which supersedes any
-    // pending turbo settle.
-    this.clearPendingSettle();
     const bounds = this.canvas.getBoundingClientRect();
     this.viewportWidth = Math.max(1, bounds.width);
     this.viewportHeight = Math.max(1, bounds.height);
@@ -519,64 +416,17 @@ export class InkCanvas {
     this.cacheContext.restore();
   }
 
-  /**
-   * Turbo (e-ink) live drawing: stamps hard-edged, fully opaque capsules directly into
-   * the visible canvas's pixels for each newly-added point (constant width, no pressure
-   * taper — that returns once the stroke settles to the smooth render). No antialiasing:
-   * e-ink panels flip pure black/white pixels far faster than partial-coverage gray ones.
-   */
-  private drawTurboIncrement(stroke: InkStroke, firstNewPointIndex: number): void {
+  private drawStrokeIncrement(stroke: InkStroke, firstNewPointIndex: number, tail: boolean): void {
     if (this.document === null) return;
     const transform = this.getTransform();
-    const scale = transform.scale * this.deviceScale;
-    const offsetX = transform.offsetX * this.deviceScale;
-    const offsetY = transform.offsetY * this.deviceScale;
-    const radius = (stroke.width * scale) / 2;
-    const rgb = parseColorToRgb(this.getPalette().ink);
-    const points = stroke.points;
-    const startIndex = Math.max(0, firstNewPointIndex);
-    for (let index = startIndex; index < points.length; index += 1) {
-      const current = points[index];
-      if (current === undefined) continue;
-      const previous = index > 0 ? points[index - 1] : current;
-      if (previous === undefined) continue;
-      const x0 = previous.x * scale + offsetX;
-      const y0 = previous.y * scale + offsetY;
-      const x1 = current.x * scale + offsetX;
-      const y1 = current.y * scale + offsetY;
-      const rect = segmentDirtyRect(x0, y0, x1, y1, radius, this.canvas.width, this.canvas.height);
-      if (rect.width <= 0 || rect.height <= 0) continue;
-      const image = this.context.getImageData(rect.x, rect.y, rect.width, rect.height);
-      rasterizeSegmentHard(image, x0 - rect.x, y0 - rect.y, x1 - rect.x, y1 - rect.y, radius, rgb);
-      this.context.putImageData(image, rect.x, rect.y);
-      this.turboBounds = this.turboBounds === null ? rect : unionRect(this.turboBounds, rect);
-    }
-  }
-
-  /** Resets the trailing settle timer; fires `runSettle` once no stroke has started (or ended) for `SETTLE_DELAY_MS`. */
-  private scheduleSettleTimer(): void {
-    if (this.settleTimer !== null) this.getWindow().clearTimeout(this.settleTimer);
-    this.settleTimer = this.getWindow().setTimeout(() => this.runSettle(), SETTLE_DELAY_MS);
-  }
-
-  /** Replaces turbo hard ink with the smooth, antialiased render for every pending region, one small partial repaint per writing pause. */
-  private runSettle(): void {
-    this.settleTimer = null;
-    if (this.pendingSettleBounds.length === 0) return;
-    if (this.cacheDirty) this.rebuildCache();
-    for (const rect of this.pendingSettleBounds) {
-      this.context.drawImage(this.cacheCanvas, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y, rect.width, rect.height);
-    }
-    this.pendingSettleBounds = [];
-  }
-
-  /** Cancels the settle timer and drops any pending regions, for paths that already trigger their own full redraw. */
-  private clearPendingSettle(): void {
-    this.pendingSettleBounds = [];
-    if (this.settleTimer !== null) {
-      this.getWindow().clearTimeout(this.settleTimer);
-      this.settleTimer = null;
-    }
+    this.context.save();
+    this.context.translate(transform.offsetX * this.deviceScale, transform.offsetY * this.deviceScale);
+    this.context.scale(transform.scale * this.deviceScale, transform.scale * this.deviceScale);
+    this.context.beginPath();
+    this.context.rect(0, 0, this.document.width, this.document.height);
+    this.context.clip();
+    renderStrokeIncrement(this.context, stroke, this.getPalette().ink, firstNewPointIndex, tail);
+    this.context.restore();
   }
 
   /**
@@ -659,12 +509,4 @@ function createDetachedCanvas(host: HTMLElement): HTMLCanvasElement {
   const canvas = host.createEl("canvas");
   canvas.remove();
   return canvas;
-}
-
-function unionRect(a: DirtyRect, b: DirtyRect): DirtyRect {
-  const x = Math.min(a.x, b.x);
-  const y = Math.min(a.y, b.y);
-  const right = Math.max(a.x + a.width, b.x + b.width);
-  const bottom = Math.max(a.y + a.height, b.y + b.height);
-  return { x, y, width: right - x, height: bottom - y };
 }
