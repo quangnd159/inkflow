@@ -94,7 +94,7 @@ export class InkFlowView extends ItemView {
       this.setStatus("Saved");
       this.updateControls();
     } catch (error) {
-      console.error("InkFlow: unable to reload native handwriting", error);
+      console.error("InkFlow: unable to reload handwriting", error);
     }
   }
 

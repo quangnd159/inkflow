@@ -62,24 +62,6 @@ export class InkStorage {
     return image;
   }
 
-  async prepareForNative(note: TFile, associatedSource?: string): Promise<LoadedInkAsset> {
-    const loaded = await this.loadForNote(note, associatedSource);
-    await this.ensureFolder(loaded.paths.source);
-
-    const source = this.vault.getAbstractFileByPath(loaded.paths.source);
-    if (!(source instanceof TFile)) {
-      await this.vault.create(loaded.paths.source, `${JSON.stringify(loaded.document)}\n`);
-    }
-
-    const snapshot = this.vault.getAbstractFileByPath(loaded.paths.snapshot);
-    if (!(snapshot instanceof TFile)) {
-      await this.vault.createBinary(loaded.paths.snapshot, whitePixelPng());
-    }
-
-    await this.ensureEmbed(note, loaded.paths);
-    return { ...loaded, isNew: false };
-  }
-
   async removeEmbed(note: TFile, paths: InkAssetPaths): Promise<void> {
     const embed = `![[${paths.snapshot}]]`;
     await this.vault.process(note, (content) => removeEmbedLine(content, embed));
@@ -142,10 +124,4 @@ export class InkStorage {
       }
     }
   }
-}
-
-function whitePixelPng(): ArrayBuffer {
-  const encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlGQAAAAASUVORK5CYII=";
-  const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
-  return bytes.buffer;
 }

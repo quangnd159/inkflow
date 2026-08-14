@@ -2,7 +2,7 @@
 
 Inkflow is a fast handwriting sidecar for Obsidian. Open a Markdown note, tap the pen, and write. Your editable ink is saved automatically and a normal PNG embed stays up to date inside the note.
 
-It is intentionally not a whiteboard or diagramming system. Inkflow does one thing: it makes handwritten marginalia feel immediate on iPad, Boox, and other pen-enabled devices.
+It is intentionally not a whiteboard or diagramming system. Inkflow does one thing: it makes handwritten marginalia feel immediate on iPad, Boox, and other pen-enabled devices, including e-ink screens.
 
 ## Why it feels different
 
@@ -37,13 +37,23 @@ The canvas follows the active note by default. Turn this off in **Settings → I
 
 The eraser removes whole strokes. This is deliberate: it is predictable, fast, and makes undo exact.
 
-## E-ink and Boox
+## E-ink devices
 
-Enable **Settings → Inkflow → E-ink mode** on a Boox or other e-ink tablet. On Android, the ordinary Inkflow ribbon action then opens the optional Inkflow BOOX companion, which uses Onyx's native raw-pen renderer while writing the same `.ink.json` and PNG assets directly into the vault. The first launch asks you to select the vault root through Android's standard folder picker; the companion receives access only to that selected folder.
+Inkflow works directly on Boox and other e-ink tablets. Enable **Settings → Inkflow → E-ink mode** to reduce display work and defer snapshots for a smoother writing experience on slow-update screens. It renders at native CSS resolution, avoids full-canvas work while the pen is moving, redraws once after an erasure, and waits for a writing pause before encoding the PNG snapshot. Browsers that report the standards-based `(update: slow)` media feature receive this profile automatically, so you often don't need to turn the setting on by hand.
 
-The command **Open browser handwriting canvas** always keeps the portable WebView renderer available. It renders at native CSS resolution, avoids full-canvas work while the pen is moving, redraws once after an erasure, and waits for a writing pause before encoding the PNG snapshot. Browsers that report the standards-based `(update: slow)` media feature receive this profile automatically.
+### Boox setup (everyone)
 
-The native companion requests no network, account, overlay, accessibility, or broad storage permission. If it is not installed, disable e-ink mode or run **Open browser handwriting canvas**.
+For the best writing speed on a Boox device, go to **Settings → App Management → App Optimization**, find Obsidian, and set its refresh mode to **Fast** or **Ultrafast**. This makes the screen redraw faster while you write. The trade-off: you'll see a bit more ghosting (faint traces of earlier strokes) until the screen does a full refresh. Turn on Inkflow's e-ink mode setting too, as described above.
+
+### Boox setup (rooted devices, optional)
+
+Boox reserves its fastest ink path for a handful of apps, such as OneNote and Evernote. On a rooted device, you can add Obsidian to that list yourself by editing your device's ink configuration (`eac_config` on older firmware, or the `onyx_config` store on firmware 4.0 and later) and setting the draw view to `com.getcapacitor.CapacitorWebView`, then rebooting. Steps and file locations: https://gist.github.com/calliecameron/b3c62c601d255630468bd493380e3b7e
+
+This is entirely optional, and only for users comfortable with rooting. Rooting voids your warranty and can brick your device, so only do this if you accept that risk.
+
+### What to expect
+
+Without the rooted optimization above, writing in Obsidian on a Boox device will feel a little slower than the built-in Notes app, since Boox limits its fastest ink path to a small set of built-in apps.
 
 ## Files and privacy
 

@@ -24,16 +24,6 @@ export default class InkFlowPlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "open-boox-handwriting",
-      name: "Open in native handwriting companion",
-      checkCallback: (checking) => {
-        const note = this.app.workspace.getActiveFile();
-        const available = Platform.isAndroidApp && note instanceof TFile && note.extension === "md";
-        if (available && !checking) void this.openNativeHandwriting(note);
-        return available;
-      },
-    });
-    this.addCommand({
       id: "open-browser-handwriting",
       name: "Open browser handwriting canvas",
       checkCallback: (checking) => {
@@ -80,7 +70,7 @@ export default class InkFlowPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("delete", (file) => {
       if (!(file instanceof TFile)) return;
       if (file.extension === "md") void this.handleDeletedNote(file.path);
-      else if (file.path.endsWith(".ink.json")) void this.handleDeletedNativeSource(file.path);
+      else if (file.path.endsWith(".ink.json")) void this.handleDeletedInkSource(file.path);
     }));
     this.registerEvent(this.app.workspace.on("css-change", () => {
       for (const leaf of this.app.workspace.getLeavesOfType(INKFLOW_VIEW_TYPE)) {
@@ -165,35 +155,7 @@ export default class InkFlowPlugin extends Plugin {
   }
 
   private async openHandwriting(): Promise<void> {
-    const note = this.app.workspace.getActiveFile();
-    if (Platform.isAndroidApp && this.settings.eInkMode && note instanceof TFile && note.extension === "md") {
-      await this.openNativeHandwriting(note);
-      return;
-    }
     await this.activateView();
-  }
-
-  private async openNativeHandwriting(note: TFile): Promise<void> {
-    try {
-      const loaded = await this.storage.prepareForNative(note, this.getAssociation(note.path));
-      await this.associate(note.path, loaded.paths.source);
-      const params = new URLSearchParams({
-        note: note.path,
-        title: note.basename,
-        source: loaded.paths.source,
-        snapshot: loaded.paths.snapshot,
-      });
-      const launcher = document.createElement("a");
-      launcher.href = `inkflow-boox://open?${params.toString()}`;
-      launcher.rel = "noreferrer";
-      launcher.hidden = true;
-      document.body.appendChild(launcher);
-      launcher.click();
-      launcher.remove();
-    } catch (error) {
-      console.error("InkFlow: unable to open BOOX companion", error);
-      new Notice("Could not prepare this note for native handwriting.");
-    }
   }
 
   private async activateView(): Promise<void> {
@@ -242,7 +204,7 @@ export default class InkFlowPlugin extends Plugin {
     await this.cleanupDeletedNote(notePath);
   }
 
-  private async handleDeletedNativeSource(sourcePath: string): Promise<void> {
+  private async handleDeletedInkSource(sourcePath: string): Promise<void> {
     try {
       const paths = this.storage.getPathsFromSource(sourcePath);
       const notePaths = Object.entries(this.settings.associations)
@@ -261,7 +223,7 @@ export default class InkFlowPlugin extends Plugin {
       }
       new Notice("Handwriting moved to trash.");
     } catch (error) {
-      console.error("InkFlow: unable to clean up native handwriting deletion", error);
+      console.error("InkFlow: unable to clean up handwriting deletion", error);
     }
   }
 
