@@ -1,4 +1,7 @@
+import { clamp } from "./geometry";
 import type { InkDocument, InkPoint, InkStroke, PageStyle } from "./model";
+
+const PRESSURE_SMOOTHING_WINDOW = 3;
 
 export interface RenderOptions {
   scale: number;
@@ -70,39 +73,149 @@ export function renderStroke(context: CanvasRenderingContext2D, stroke: InkStrok
   renderStrokeIncrement(context, stroke, color, 0);
 }
 
+/**
+ * Renders a stroke (or the portion of it starting at `firstNewPointIndex`) using
+ * midpoint quadratic smoothing: curves run through the midpoints of consecutive
+ * points, using the raw points themselves as quadratic control points. The most
+ * recent point is always joined to its predecessor's midpoint with a short
+ * straight "tail" so the ink tracks the pen tip exactly; that tail gets replaced
+ * by a smooth curve once another point arrives. Because each curve segment is
+ * fully determined by three consecutive raw points, this can be called
+ * incrementally (redrawing only the newly-eligible segments) or as a full
+ * redraw (firstNewPointIndex = 0) and produce the same pixels either way.
+ *
+ * `tail` controls whether that straight tail is drawn at all. On an append-only
+ * surface (e-ink) where nothing is ever erased between calls, pass `tail = false`
+ * for the per-point incremental calls so no straight spur is left behind; then
+ * make one final call with `tail = true` once the pen lifts, to draw the closing
+ * curve segment(s) and the tail together so the ink reaches the exact last point.
+ */
 export function renderStrokeIncrement(
   context: CanvasRenderingContext2D,
   stroke: InkStroke,
   color: string,
   firstNewPointIndex: number,
+  tail = true,
 ): void {
-  const first = stroke.points[0];
+  const points = stroke.points;
+  const first = points[0];
   if (first === undefined) return;
   context.save();
   context.fillStyle = color;
   context.strokeStyle = color;
   context.lineCap = "round";
   context.lineJoin = "round";
+
   if (firstNewPointIndex === 0) {
     context.beginPath();
-    context.arc(first.x, first.y, pressureWidth(stroke.width, first.pressure) / 2, 0, Math.PI * 2);
+    context.arc(first.x, first.y, pressureWidth(stroke.width, smoothedPressure(points, 0)) / 2, 0, Math.PI * 2);
     context.fill();
   }
-  for (let index = Math.max(1, firstNewPointIndex); index < stroke.points.length; index += 1) {
-    const start = stroke.points[index - 1];
-    const end = stroke.points[index];
-    if (start === undefined || end === undefined) continue;
-    context.beginPath();
-    context.lineWidth = pressureWidth(stroke.width, (start.pressure + end.pressure) / 2);
-    context.moveTo(start.x, start.y);
-    context.lineTo(end.x, end.y);
-    context.stroke();
+
+  if (points.length === 2) {
+    if (tail) {
+      const end = points[1]!;
+      context.beginPath();
+      context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, 1));
+      context.moveTo(first.x, first.y);
+      context.lineTo(end.x, end.y);
+      context.stroke();
+    }
+    context.restore();
+    return;
   }
+
+  if (points.length >= 3) {
+    const startIndex = Math.max(1, firstNewPointIndex - 1);
+    for (let index = startIndex; index <= points.length - 2; index += 1) {
+      const previous = points[index - 1];
+      const current = points[index];
+      const next = points[index + 1];
+      if (previous === undefined || current === undefined || next === undefined) continue;
+      const from = index === 1 ? previous : midpoint(previous, current);
+      const to = midpoint(current, next);
+      context.beginPath();
+      context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, index));
+      context.moveTo(from.x, from.y);
+      context.quadraticCurveTo(current.x, current.y, to.x, to.y);
+      context.stroke();
+    }
+
+    if (tail) {
+      const last = points[points.length - 1]!;
+      const secondLast = points[points.length - 2]!;
+      const tailStart = midpoint(secondLast, last);
+      context.beginPath();
+      context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, points.length - 1));
+      context.moveTo(tailStart.x, tailStart.y);
+      context.lineTo(last.x, last.y);
+      context.stroke();
+    }
+  }
+
   context.restore();
 }
 
-function pressureWidth(width: number, pressure: number): number {
-  return width * (0.45 + Math.max(0, Math.min(1, pressure)) * 0.9);
+/**
+ * Draws a lightweight predicted "tail" ahead of the pen tip, using up to the
+ * first two points from `PointerEvent.getPredictedEvents()`. These points are
+ * transient render-only data: they are never added to the stroke's saved
+ * points, so they get overwritten by the next full redraw of the real stroke.
+ */
+export function renderPredictedTail(
+  context: CanvasRenderingContext2D,
+  stroke: InkStroke,
+  predicted: readonly InkPoint[],
+  color: string,
+): void {
+  const points = stroke.points;
+  const last = points[points.length - 1];
+  if (last === undefined || predicted.length === 0) return;
+  const pressure = smoothedPressure(points, points.length - 1);
+  context.save();
+  context.strokeStyle = color;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = pressureWidth(stroke.width, pressure);
+  context.beginPath();
+  context.moveTo(last.x, last.y);
+  for (const point of predicted.slice(0, 2)) {
+    context.lineTo(point.x, point.y);
+  }
+  context.stroke();
+  context.restore();
+}
+
+function midpoint(a: InkPoint, b: InkPoint): { x: number; y: number } {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/**
+ * Maps pressure 0..1 to a width multiplier of roughly 0.6x..1.5x, piecewise
+ * linear so that the default pressure of 0.5 (mice and no-pressure styli)
+ * always lands exactly on 1.0x, keeping non-pressure input unchanged.
+ */
+export function pressureWidthScale(pressure: number): number {
+  const p = clamp(pressure, 0, 1);
+  return p <= 0.5 ? 0.6 + p * 0.8 : 0.5 + p;
+}
+
+export function pressureWidth(width: number, pressure: number): number {
+  return width * pressureWidthScale(pressure);
+}
+
+/** Smooths pressure over a small trailing window so line width doesn't jitter point-to-point. */
+export function smoothedPressure(points: readonly InkPoint[], index: number, window = PRESSURE_SMOOTHING_WINDOW): number {
+  const start = Math.max(0, index - window + 1);
+  let sum = 0;
+  let count = 0;
+  for (let i = start; i <= index; i += 1) {
+    const point = points[i];
+    if (point === undefined) continue;
+    sum += point.pressure;
+    count += 1;
+  }
+  return count > 0 ? sum / count : 0.5;
 }
 
 export function pointFromPointer(event: PointerEvent, canvas: HTMLCanvasElement, scale: number, offsetX: number, offsetY: number): InkPoint {

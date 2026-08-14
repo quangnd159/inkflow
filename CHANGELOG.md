@@ -5,6 +5,11 @@ All notable changes to Inkflow are documented here.
 ## Next
 
 - Removed the BOOX companion app in favor of an improved in-app canvas.
+- Work around iPadOS Scribble intercepting touchmove events during handwriting.
+- Render the predicted stroke tail immediately for lower perceived latency.
+- Taper stroke width with pressure and smooth strokes with midpoint quadratics.
+- Fix stray spurs left behind at the end of incrementally rendered strokes.
+- Remove a duplicate "open browser handwriting canvas" command.
 
 ## 1.3.0 — 2026-08-10
 

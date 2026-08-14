@@ -1,5 +1,5 @@
 import { clamp, shouldAddPoint, strokeHitsPoint } from "./geometry";
-import { renderDocument, renderStroke, renderStrokeIncrement, pointFromPointer } from "./render";
+import { renderDocument, renderPredictedTail, renderStroke, renderStrokeIncrement, pointFromPointer } from "./render";
 import type { InkDocument, InkPoint, InkStroke, Tool } from "./model";
 
 const MAX_DEVICE_PIXEL_RATIO = 2;
@@ -26,6 +26,8 @@ export class InkCanvas {
   private tool: Tool = "pen";
   private width = 5;
   private currentStroke: InkStroke | null = null;
+  /** Transient, render-only predicted points ahead of the pen tip (non-e-ink only). Never saved to the stroke. */
+  private predictedPoints: InkPoint[] = [];
   private activePointer: number | null = null;
   private penIsDown = false;
   private eraserChanged = false;
@@ -138,6 +140,7 @@ export class InkCanvas {
   destroy(): void {
     this.resizeObserver.disconnect();
     if (this.resizeFrame !== null) this.getWindow().cancelAnimationFrame(this.resizeFrame);
+    this.canvas.removeEventListener("touchmove", this.onTouchMove);
   }
 
   private bindEvents(): void {
@@ -146,6 +149,10 @@ export class InkCanvas {
     else this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerup", this.onPointerUp);
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    // iPadOS Scribble intercepts Apple Pencil touch input in WKWebView unless the page
+    // actively prevents the default touchmove behavior; touch-action: none (styles.css)
+    // alone is not enough to stop it from swallowing strokes.
+    this.canvas.addEventListener("touchmove", this.onTouchMove, { passive: false });
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.canvas.addEventListener("keydown", this.onKeyDown);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
@@ -163,7 +170,9 @@ export class InkCanvas {
     this.pushHistory();
     if (this.tool === "pen") {
       this.currentStroke = { id: createStrokeId(), color: "auto", width: this.width, points: [point] };
-      this.drawStrokeIncrement(this.currentStroke, 0);
+      this.predictedPoints = [];
+      if (this.isEInk()) this.drawStrokeIncrement(this.currentStroke, 0, false);
+      else this.requestFrame();
     } else {
       this.eraserChanged = false;
       this.erase(point);
@@ -186,8 +195,17 @@ export class InkCanvas {
       }
     }
     if (this.currentStroke !== null && this.currentStroke.points.length > firstNewPointIndex) {
-      this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex);
+      if (this.isEInk()) {
+        this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex, false);
+      } else {
+        this.predictedPoints = this.getPredictedPoints(event);
+        this.requestFrame();
+      }
     }
+    event.preventDefault();
+  };
+
+  private readonly onTouchMove = (event: TouchEvent): void => {
     event.preventDefault();
   };
 
@@ -202,14 +220,22 @@ export class InkCanvas {
     if (this.currentStroke !== null) {
       const firstNewPointIndex = this.currentStroke.points.length;
       const finalPoint = this.toPoint(event);
+      const eInk = this.isEInk();
       if (this.isOnPage(finalPoint) && shouldAddPoint(this.currentStroke.points, finalPoint)) {
         this.currentStroke.points.push(finalPoint);
-        this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex);
       }
+      // Draw the closing curve segment(s) plus the tail in one final call, whether or
+      // not a new point was pushed above, so the on-screen result reaches the exact
+      // pen-lift point and matches the full-redraw geometry (see drawStrokeIncrement).
+      if (eInk) this.drawStrokeIncrement(this.currentStroke, firstNewPointIndex, true);
+      this.predictedPoints = [];
       const committed = this.currentStroke;
       this.document.strokes = [...this.document.strokes, committed];
       this.currentStroke = null;
       this.commitStrokeToCache(committed);
+      // Non-e-ink strokes are drawn per-frame (cache blit + full redraw); request one
+      // final frame so the settled stroke replaces any lingering predicted tail.
+      if (!eInk) this.requestFrame();
       this.options.onChange();
     } else if (this.tool === "eraser") {
       if (this.eraserChanged) this.changed();
@@ -264,7 +290,7 @@ export class InkCanvas {
     const bounds = this.canvas.getBoundingClientRect();
     this.viewportWidth = Math.max(1, bounds.width);
     this.viewportHeight = Math.max(1, bounds.height);
-    const eInkMode = this.options.getEInkMode();
+    const eInkMode = this.isEInk();
     const pixelLimit = eInkMode ? MAX_EINK_DISPLAY_PIXELS : MAX_DISPLAY_PIXELS;
     const densityLimit = eInkMode ? 1 : MAX_DEVICE_PIXEL_RATIO;
     const areaLimitScale = Math.sqrt(pixelLimit / (this.viewportWidth * this.viewportHeight));
@@ -321,13 +347,20 @@ export class InkCanvas {
     this.context.drawImage(this.cacheCanvas, 0, 0);
     if (this.currentStroke !== null) {
       const transform = this.getTransform();
+      const ink = this.getPalette().ink;
       this.context.save();
       this.context.translate(transform.offsetX * this.deviceScale, transform.offsetY * this.deviceScale);
       this.context.scale(transform.scale * this.deviceScale, transform.scale * this.deviceScale);
       this.context.beginPath();
       this.context.rect(0, 0, this.document.width, this.document.height);
       this.context.clip();
-      renderStroke(this.context, this.currentStroke, this.getPalette().ink);
+      renderStroke(this.context, this.currentStroke, ink);
+      // Predicted points mask input latency by drawing slightly ahead of the pen. They
+      // are transient render-only data, never added to the stroke, and are never used
+      // on e-ink: a misprediction there would force an extra, costly panel refresh.
+      if (!this.isEInk() && this.predictedPoints.length > 0) {
+        renderPredictedTail(this.context, this.currentStroke, this.predictedPoints, ink);
+      }
       this.context.restore();
     }
   }
@@ -359,7 +392,7 @@ export class InkCanvas {
     this.cacheContext.restore();
   }
 
-  private drawStrokeIncrement(stroke: InkStroke, firstNewPointIndex: number): void {
+  private drawStrokeIncrement(stroke: InkStroke, firstNewPointIndex: number, tail: boolean): void {
     if (this.document === null) return;
     const transform = this.getTransform();
     this.context.save();
@@ -368,7 +401,7 @@ export class InkCanvas {
     this.context.beginPath();
     this.context.rect(0, 0, this.document.width, this.document.height);
     this.context.clip();
-    renderStrokeIncrement(this.context, stroke, this.getPalette().ink, firstNewPointIndex);
+    renderStrokeIncrement(this.context, stroke, this.getPalette().ink, firstNewPointIndex, tail);
     this.context.restore();
   }
 
@@ -382,6 +415,19 @@ export class InkCanvas {
   private toPoint(event: PointerEvent): InkPoint {
     const transform = this.getTransform();
     return pointFromPointer(event, this.canvas, transform.scale, transform.offsetX, transform.offsetY);
+  }
+
+  private isEInk(): boolean {
+    return this.options.getEInkMode();
+  }
+
+  private getPredictedPoints(event: PointerEvent): InkPoint[] {
+    const predicted = event.getPredictedEvents?.() ?? [];
+    if (predicted.length === 0) return [];
+    const transform = this.getTransform();
+    return predicted
+      .slice(0, 2)
+      .map((sample) => pointFromPointer(sample, this.canvas, transform.scale, transform.offsetX, transform.offsetY));
   }
 
   private isOnPage(point: InkPoint): boolean {

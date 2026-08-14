@@ -24,15 +24,6 @@ export default class InkFlowPlugin extends Plugin {
       },
     });
     this.addCommand({
-      id: "open-browser-handwriting",
-      name: "Open browser handwriting canvas",
-      checkCallback: (checking) => {
-        const available = this.app.workspace.getActiveViewOfType(MarkdownView) !== null;
-        if (available && !checking) void this.activateView();
-        return available;
-      },
-    });
-    this.addCommand({
       id: "undo-ink-stroke",
       name: "Undo ink stroke",
       callback: () => this.getVisibleView()?.undo(),
