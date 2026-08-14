@@ -37,13 +37,13 @@ The canvas follows the active note by default. Turn this off in **Settings → I
 
 The eraser removes whole strokes. This is deliberate: it is predictable, fast, and makes undo exact.
 
-## E-ink devices
+## Boox and other e-ink devices
 
-Inkflow works directly on Boox and other e-ink tablets. Enable **Settings → Inkflow → E-ink mode** to reduce display work and defer snapshots for a smoother writing experience on slow-update screens. It renders at native CSS resolution, avoids full-canvas work while the pen is moving, redraws once after an erasure, and waits for a writing pause before encoding the PNG snapshot. Browsers that report the standards-based `(update: slow)` media feature receive this profile automatically, so you often don't need to turn the setting on by hand.
+Inkflow works directly on Boox and other e-ink tablets.
 
 ### Boox setup (everyone)
 
-For the best writing speed on a Boox device, go to **Settings → App Management → App Optimization**, find Obsidian, and set its refresh mode to **Fast** or **Ultrafast**. This makes the screen redraw faster while you write. The trade-off: you'll see a bit more ghosting (faint traces of earlier strokes) until the screen does a full refresh. Turn on Inkflow's e-ink mode setting too, as described above.
+For the best writing speed on a Boox device, go to **Settings → App Management → App Optimization**, find Obsidian, and set its refresh mode to **Fast** or **Ultrafast**. This makes the screen redraw faster while you write. The trade-off: you'll see a bit more ghosting (faint traces of earlier strokes) until the screen does a full refresh.
 
 ### Boox setup (rooted devices, optional)
 

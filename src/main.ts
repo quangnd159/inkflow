@@ -98,17 +98,6 @@ export default class InkFlowPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  isEInkOptimized(ownerDocument: Document): boolean {
-    return this.settings.eInkMode || (ownerDocument.defaultView?.matchMedia("(update: slow)").matches ?? false);
-  }
-
-  refreshCanvasPerformance(): void {
-    for (const leaf of this.app.workspace.getLeavesOfType(INKFLOW_VIEW_TYPE)) {
-      const view = leaf.view;
-      if (view instanceof InkFlowView) view.handlePerformanceChange();
-    }
-  }
-
   getAssociation(notePath: string): string | undefined {
     return this.settings.associations[notePath];
   }

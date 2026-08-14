@@ -1,7 +1,7 @@
 {
   "id": "inkflow",
   "name": "Inkflow",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "minAppVersion": "1.13.0",
   "description": "Write beside any note with a stylus. Inkflow keeps an editable canvas and auto-updates a portable image embed.",
   "author": "Quang Nguyen Dang",

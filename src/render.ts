@@ -69,34 +69,15 @@ export function renderPage(
   context.restore();
 }
 
-export function renderStroke(context: CanvasRenderingContext2D, stroke: InkStroke, color = stroke.color): void {
-  renderStrokeIncrement(context, stroke, color, 0);
-}
-
 /**
- * Renders a stroke (or the portion of it starting at `firstNewPointIndex`) using
- * midpoint quadratic smoothing: curves run through the midpoints of consecutive
- * points, using the raw points themselves as quadratic control points. The most
- * recent point is always joined to its predecessor's midpoint with a short
- * straight "tail" so the ink tracks the pen tip exactly; that tail gets replaced
- * by a smooth curve once another point arrives. Because each curve segment is
- * fully determined by three consecutive raw points, this can be called
- * incrementally (redrawing only the newly-eligible segments) or as a full
- * redraw (firstNewPointIndex = 0) and produce the same pixels either way.
- *
- * `tail` controls whether that straight tail is drawn at all. On an append-only
- * surface (e-ink) where nothing is ever erased between calls, pass `tail = false`
- * for the per-point incremental calls so no straight spur is left behind; then
- * make one final call with `tail = true` once the pen lifts, to draw the closing
- * curve segment(s) and the tail together so the ink reaches the exact last point.
+ * Renders a stroke using midpoint quadratic smoothing: curves run through the
+ * midpoints of consecutive points, using the raw points themselves as
+ * quadratic control points. The most recent point is always joined to its
+ * predecessor's midpoint with a short straight "tail" so the ink tracks the
+ * pen tip exactly; that tail gets replaced by a smooth curve once another
+ * point arrives.
  */
-export function renderStrokeIncrement(
-  context: CanvasRenderingContext2D,
-  stroke: InkStroke,
-  color: string,
-  firstNewPointIndex: number,
-  tail = true,
-): void {
+export function renderStroke(context: CanvasRenderingContext2D, stroke: InkStroke, color = stroke.color): void {
   const points = stroke.points;
   const first = points[0];
   if (first === undefined) return;
@@ -106,28 +87,23 @@ export function renderStrokeIncrement(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (firstNewPointIndex === 0) {
-    context.beginPath();
-    context.arc(first.x, first.y, pressureWidth(stroke.width, smoothedPressure(points, 0)) / 2, 0, Math.PI * 2);
-    context.fill();
-  }
+  context.beginPath();
+  context.arc(first.x, first.y, pressureWidth(stroke.width, smoothedPressure(points, 0)) / 2, 0, Math.PI * 2);
+  context.fill();
 
   if (points.length === 2) {
-    if (tail) {
-      const end = points[1]!;
-      context.beginPath();
-      context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, 1));
-      context.moveTo(first.x, first.y);
-      context.lineTo(end.x, end.y);
-      context.stroke();
-    }
+    const end = points[1]!;
+    context.beginPath();
+    context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, 1));
+    context.moveTo(first.x, first.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
     context.restore();
     return;
   }
 
   if (points.length >= 3) {
-    const startIndex = Math.max(1, firstNewPointIndex - 1);
-    for (let index = startIndex; index <= points.length - 2; index += 1) {
+    for (let index = 1; index <= points.length - 2; index += 1) {
       const previous = points[index - 1];
       const current = points[index];
       const next = points[index + 1];
@@ -141,16 +117,14 @@ export function renderStrokeIncrement(
       context.stroke();
     }
 
-    if (tail) {
-      const last = points[points.length - 1]!;
-      const secondLast = points[points.length - 2]!;
-      const tailStart = midpoint(secondLast, last);
-      context.beginPath();
-      context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, points.length - 1));
-      context.moveTo(tailStart.x, tailStart.y);
-      context.lineTo(last.x, last.y);
-      context.stroke();
-    }
+    const last = points[points.length - 1]!;
+    const secondLast = points[points.length - 2]!;
+    const tailStart = midpoint(secondLast, last);
+    context.beginPath();
+    context.lineWidth = pressureWidth(stroke.width, smoothedPressure(points, points.length - 1));
+    context.moveTo(tailStart.x, tailStart.y);
+    context.lineTo(last.x, last.y);
+    context.stroke();
   }
 
   context.restore();
