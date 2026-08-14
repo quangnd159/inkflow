@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { pressureWidth, pressureWidthScale, renderPredictedTail, renderStrokeIncrement, smoothedPressure } from "../src/render";
+import {
+  parseColorToRgb,
+  pressureWidth,
+  pressureWidthScale,
+  rasterizeSegmentHard,
+  renderPredictedTail,
+  renderStrokeIncrement,
+  segmentDirtyRect,
+  smoothedPressure,
+} from "../src/render";
 import type { InkStroke } from "../src/model";
+
+function createImageData(width: number, height: number): ImageData {
+  return { width, height, data: new Uint8ClampedArray(width * height * 4), colorSpace: "srgb" } as unknown as ImageData;
+}
+
+function pixelAt(image: ImageData, x: number, y: number): [number, number, number, number] {
+  const index = (y * image.width + x) * 4;
+  return [image.data[index]!, image.data[index + 1]!, image.data[index + 2]!, image.data[index + 3]!];
+}
 
 function contextMock(): { context: CanvasRenderingContext2D; spies: Record<string, ReturnType<typeof vi.fn>> } {
   const spies = {
@@ -201,6 +219,77 @@ describe("pressure width mapping", () => {
   it("is monotonically increasing", () => {
     expect(pressureWidthScale(0.25)).toBeLessThan(pressureWidthScale(0.5));
     expect(pressureWidthScale(0.5)).toBeLessThan(pressureWidthScale(0.75));
+  });
+});
+
+describe("segmentDirtyRect (turbo e-ink)", () => {
+  it("bounds the capsule with a 1px pad", () => {
+    const rect = segmentDirtyRect(10, 10, 20, 10, 3, 1000, 1000);
+    expect(rect).toEqual({ x: 6, y: 6, width: 18, height: 8 });
+  });
+
+  it("clamps to the canvas edges", () => {
+    const rect = segmentDirtyRect(-5, -5, 2, 2, 3, 50, 50);
+    expect(rect.x).toBe(0);
+    expect(rect.y).toBe(0);
+    const rect2 = segmentDirtyRect(48, 48, 55, 55, 3, 50, 50);
+    expect(rect2.x + rect2.width).toBeLessThanOrEqual(50);
+    expect(rect2.y + rect2.height).toBeLessThanOrEqual(50);
+  });
+
+  it("handles a zero-length segment (a dot)", () => {
+    const rect = segmentDirtyRect(10, 10, 10, 10, 4, 1000, 1000);
+    expect(rect).toEqual({ x: 5, y: 5, width: 10, height: 10 });
+  });
+});
+
+describe("rasterizeSegmentHard (turbo e-ink)", () => {
+  it("inks every pixel whose center is within radius and leaves the rest untouched", () => {
+    const image = createImageData(10, 10);
+    rasterizeSegmentHard(image, 5, 5, 5, 5, 2, [10, 20, 30]);
+    // Center pixel is ink.
+    expect(pixelAt(image, 5, 5)).toEqual([10, 20, 30, 255]);
+    // Far corner is untouched (still transparent black).
+    expect(pixelAt(image, 0, 0)).toEqual([0, 0, 0, 0]);
+    // A pixel clearly outside the radius is untouched.
+    expect(pixelAt(image, 9, 9)).toEqual([0, 0, 0, 0]);
+  });
+
+  it("produces only fully-opaque ink or fully-untouched pixels, never partial alpha", () => {
+    const image = createImageData(20, 20);
+    rasterizeSegmentHard(image, 2, 10, 17, 10, 3.4, [255, 255, 255]);
+    for (let i = 0; i < image.data.length; i += 4) {
+      const alpha = image.data[i + 3]!;
+      expect(alpha === 0 || alpha === 255).toBe(true);
+      if (alpha === 255) {
+        expect(image.data[i]).toBe(255);
+        expect(image.data[i + 1]).toBe(255);
+        expect(image.data[i + 2]).toBe(255);
+      }
+    }
+  });
+
+  it("works for a zero-length segment (a dot)", () => {
+    const image = createImageData(10, 10);
+    rasterizeSegmentHard(image, 5, 5, 5, 5, 2, [1, 2, 3]);
+    expect(pixelAt(image, 5, 5)).toEqual([1, 2, 3, 255]);
+    expect(pixelAt(image, 5, 0)).toEqual([0, 0, 0, 0]);
+  });
+});
+
+describe("parseColorToRgb", () => {
+  it("parses 6-digit hex", () => {
+    expect(parseColorToRgb("#111111")).toEqual([17, 17, 17]);
+    expect(parseColorToRgb("#ffffff")).toEqual([255, 255, 255]);
+  });
+
+  it("parses 3-digit hex", () => {
+    expect(parseColorToRgb("#fff")).toEqual([255, 255, 255]);
+  });
+
+  it("falls back to black for anything else", () => {
+    expect(parseColorToRgb("rgb(1, 2, 3)")).toEqual([0, 0, 0]);
+    expect(parseColorToRgb("auto")).toEqual([0, 0, 0]);
   });
 });
 
